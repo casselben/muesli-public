@@ -472,13 +472,18 @@ function initSDK() {
   RecallAiSdk.addEventListener('meeting-closed', (evt) => {
     console.log("Meeting closed:", evt);
 
+    if (!evt.window || evt.window.id == null) {
+      console.warn('Meeting closed event missing window or window.id, skipping');
+      return;
+    }
+
     // Log the SDK meeting-closed event
     sdkLogger.logEvent('meeting-closed', {
       windowId: evt.window.id
     });
 
     // Clean up the global tracking when a meeting ends
-    if (evt.window && evt.window.id && global.activeMeetingIds && global.activeMeetingIds[evt.window.id]) {
+    if (global.activeMeetingIds && global.activeMeetingIds[evt.window.id]) {
       console.log(`Cleaning up meeting tracking for: ${evt.window.id}`);
       delete global.activeMeetingIds[evt.window.id];
     }
@@ -495,14 +500,21 @@ function initSDK() {
   RecallAiSdk.addEventListener('recording-ended', async (evt) => {
     console.log("Recording ended:", evt);
 
+    if (!evt.window || evt.window.id == null) {
+      console.warn('Recording ended event missing window or window.id (e.g. meeting closed first), skipping');
+      return;
+    }
+
+    const windowId = evt.window.id;
+
     // Log the SDK recording-ended event
     sdkLogger.logEvent('recording-ended', {
-      windowId: evt.window.id
+      windowId
     });
 
     try {
       // Update the note with recording information
-      await updateNoteWithRecordingInfo(evt.window.id);
+      await updateNoteWithRecordingInfo(windowId);
 
       // Add a small delay before uploading (good practice for file system operations)
       setTimeout(async () => {
@@ -515,12 +527,12 @@ function initSDK() {
 
             // Log the uploadRecording API call
             sdkLogger.logApiCall('uploadRecording', {
-              windowId: evt.window.id,
+              windowId,
               uploadToken: `${uploadData.upload_token.substring(0, 8)}...` // Log truncated token for security
             });
 
             await RecallAiSdk.uploadRecording({
-              windowId: evt.window.id,
+              windowId,
               uploadToken: uploadData.upload_token
             });
           } else {
@@ -529,22 +541,23 @@ function initSDK() {
 
             // Log the uploadRecording API call (fallback)
             sdkLogger.logApiCall('uploadRecording', {
-              windowId: evt.window.id
+              windowId
             });
 
-            await RecallAiSdk.uploadRecording({ windowId: evt.window.id });
+            await RecallAiSdk.uploadRecording({ windowId });
           }
         } catch (uploadError) {
           console.error('Error during upload:', uploadError);
-          // Fallback to regular upload
-
-          // Log the uploadRecording API call (error fallback)
+          // Fallback to regular upload (use captured windowId, not evt.window)
           sdkLogger.logApiCall('uploadRecording', {
-            windowId: evt.window.id,
+            windowId,
             error: 'Fallback after error'
           });
-
-          await RecallAiSdk.uploadRecording({ windowId: evt.window.id });
+          try {
+            await RecallAiSdk.uploadRecording({ windowId });
+          } catch (fallbackError) {
+            console.error('Fallback upload also failed (window may be closed):', fallbackError);
+          }
         }
       }, 3000); // Wait 3 seconds before uploading
     } catch (error) {
@@ -561,14 +574,8 @@ function initSDK() {
     const { progress, window } = evt;
     console.log(`Upload progress: ${progress}%`);
 
-    // Log the SDK upload-progress event
-    // sdkLogger.logEvent('upload-progress', {
-    //   windowId: window.id,
-    //   progress
-    // });
-
-    // Update the note with upload progress if needed
-    if (progress === 100) {
+    // Guard: window may be missing if meeting was closed before upload completed
+    if (progress === 100 && window && window.id != null) {
       console.log(`Upload completed for recording: ${window.id}`);
       // Could update the note here with upload completion status
     }
@@ -586,7 +593,7 @@ function initSDK() {
     });
 
     // Update recording state in our global tracker
-    if (window && window.id) {
+    if (window && window.id != null) {
       // Get the meeting note ID associated with this window
       let noteId = null;
       if (global.activeMeetingIds && global.activeMeetingIds[window.id]) {
