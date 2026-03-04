@@ -306,6 +306,9 @@ function showHomeView() {
       joinMeetingBtn.disabled = true;
     }
   }
+
+  const sendBotBtn = document.getElementById('sendBotBtn');
+  if (sendBotBtn) sendBotBtn.style.display = 'inline-flex';
 }
 
 // Function to show editor view
@@ -319,11 +322,11 @@ function showEditorView(meetingId) {
   document.getElementById('newNoteBtn').style.display = 'none';
   document.getElementById('toggleSidebar').style.display = 'none'; // Hide the sidebar toggle
 
-  // Always hide the join meeting button when in editor view
+  // Always hide the join meeting button and send bot button when in editor view
   const joinMeetingBtn = document.getElementById('joinMeetingBtn');
-  if (joinMeetingBtn) {
-    joinMeetingBtn.style.display = 'none';
-  }
+  if (joinMeetingBtn) joinMeetingBtn.style.display = 'none';
+  const sendBotBtn = document.getElementById('sendBotBtn');
+  if (sendBotBtn) sendBotBtn.style.display = 'none';
 
   // Find the meeting in either upcoming or past meetings
   let meeting = [...upcomingMeetings, ...pastMeetings].find(m => m.id === meetingId);
@@ -1617,6 +1620,101 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('Search query:', e.target.value);
     // TODO: Implement search functionality
   });
+
+  // --- Send Bot UI handlers ---
+  const sendBotBtnEl = document.getElementById('sendBotBtn');
+  const sendBotModal = document.getElementById('sendBotModal');
+  const sendBotCancel = document.getElementById('sendBotCancel');
+  const sendBotSubmit = document.getElementById('sendBotSubmit');
+  const botUrlInput = document.getElementById('botMeetingUrlInput');
+  const botStatusBadge = document.getElementById('botStatusBadge');
+
+  if (sendBotBtnEl && sendBotModal) {
+    sendBotBtnEl.addEventListener('click', () => {
+      sendBotModal.style.display = 'flex';
+      botUrlInput.value = '';
+      botStatusBadge.style.display = 'none';
+      sendBotSubmit.disabled = false;
+      sendBotSubmit.textContent = 'Send Bot';
+      setTimeout(() => botUrlInput.focus(), 100);
+    });
+
+    sendBotCancel.addEventListener('click', () => {
+      sendBotModal.style.display = 'none';
+    });
+
+    sendBotModal.addEventListener('click', (e) => {
+      if (e.target === sendBotModal) sendBotModal.style.display = 'none';
+    });
+
+    sendBotSubmit.addEventListener('click', async () => {
+      const url = botUrlInput.value.trim();
+      if (!url) return;
+
+      sendBotSubmit.disabled = true;
+      sendBotSubmit.innerHTML = '<span class="spinner"></span> Sending...';
+
+      try {
+        const result = await window.electronAPI.sendRecallBot(url);
+        if (result.success) {
+          window._activeBotId = result.botId;
+          window._activeBotMeetingId = result.meetingId;
+          updateBotStatusBadge(result.status || 'joining', 'Bot is joining the meeting...');
+          sendBotSubmit.textContent = 'Bot Sent';
+        } else {
+          updateBotStatusBadge('fatal', result.error || 'Failed to send bot');
+          sendBotSubmit.disabled = false;
+          sendBotSubmit.textContent = 'Retry';
+        }
+      } catch (err) {
+        updateBotStatusBadge('fatal', err.message);
+        sendBotSubmit.disabled = false;
+        sendBotSubmit.textContent = 'Retry';
+      }
+    });
+
+    botUrlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !sendBotSubmit.disabled) sendBotSubmit.click();
+    });
+  }
+
+  function updateBotStatusBadge(code, message) {
+    if (!botStatusBadge) return;
+    botStatusBadge.style.display = 'flex';
+    const dot = botStatusBadge.querySelector('.bot-status-dot');
+    const text = botStatusBadge.querySelector('.bot-status-text');
+    dot.className = 'bot-status-dot ' + code;
+
+    const labels = {
+      ready: 'Bot ready',
+      joining: 'Bot joining...',
+      in_waiting_room: 'In waiting room...',
+      in_call_not_recording: 'In call, starting...',
+      in_call_recording: 'Recording in progress',
+      call_ended: 'Call ended, processing...',
+      done: 'Done — transcript ready',
+      fatal: 'Error'
+    };
+    text.textContent = labels[code] || message || code;
+  }
+
+  if (window.electronAPI.onBotStatusUpdate) {
+    window.electronAPI.onBotStatusUpdate((data) => {
+      console.log('Bot status update:', data);
+      updateBotStatusBadge(data.code, data.message);
+
+      if (data.code === 'done') {
+        sendBotSubmit.textContent = 'Done';
+        setTimeout(async () => {
+          sendBotModal.style.display = 'none';
+          await loadMeetingsDataFromFile();
+          if (data.meetingId) {
+            showEditorView(data.meetingId);
+          }
+        }, 1500);
+      }
+    });
+  }
 
   // Add click event delegation for meeting cards and their actions
   document.querySelector('.main-content').addEventListener('click', (e) => {

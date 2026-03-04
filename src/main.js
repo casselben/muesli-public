@@ -1036,6 +1036,125 @@ ipcMain.handle('pushTasksToAsana', async (event, tasks) => {
   }
 });
 
+// --- Recall API Bot Integration ---
+const recallBot = require('./recall-bot');
+const activeBotPollers = {};
+
+ipcMain.handle('sendRecallBot', async (event, meetingUrl) => {
+  try {
+    if (!meetingUrl || typeof meetingUrl !== 'string') {
+      return { success: false, error: 'Meeting URL is required' };
+    }
+    console.log('Sending Recall bot to:', meetingUrl);
+
+    const botData = await recallBot.createBot(meetingUrl);
+    const botId = botData.id;
+    const status = recallBot.getLatestStatus(botData);
+    console.log(`Bot created: ${botId}, status: ${status.code}`);
+
+    const now = new Date();
+    const meetingId = 'meeting-' + now.getTime();
+    const meeting = {
+      id: meetingId,
+      type: 'document',
+      title: 'Bot Recording',
+      subtitle: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      hasDemo: false,
+      date: now.toISOString(),
+      participants: [],
+      content: `# Meeting Title\n• Bot Recording\n\n# Meeting Date and Time\n• ${now.toLocaleString()}\n\n# Participants\n• \n\n# Description\n• Recorded via Recall API bot\n\nChat with meeting transcript: `,
+      transcript: [],
+      botId,
+      source: 'recall-api',
+      meetingUrl
+    };
+
+    await fileOperationManager.scheduleOperation((data) => {
+      data.pastMeetings.unshift(meeting);
+      return data;
+    });
+
+    startBotPolling(botId, meetingId);
+
+    return { success: true, botId, meetingId, status: status.code };
+  } catch (err) {
+    console.error('sendRecallBot error:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('getRecallBotStatus', async (event, botId) => {
+  try {
+    const botData = await recallBot.getBotStatus(botId);
+    const status = recallBot.getLatestStatus(botData);
+    return { success: true, code: status.code, message: status.message };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+function startBotPolling(botId, meetingId) {
+  if (activeBotPollers[botId]) return;
+
+  console.log(`Starting polling for bot ${botId} (meeting ${meetingId})`);
+  const interval = setInterval(async () => {
+    try {
+      const botData = await recallBot.getBotStatus(botId);
+      const status = recallBot.getLatestStatus(botData);
+      console.log(`Bot ${botId} status: ${status.code}`);
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('bot-status-update', {
+          botId, meetingId, code: status.code, message: status.message
+        });
+      }
+
+      if (recallBot.isTerminalStatus(status.code)) {
+        clearInterval(interval);
+        delete activeBotPollers[botId];
+
+        if (status.code === 'done') {
+          await fetchAndSaveBotTranscript(botId, meetingId);
+        } else {
+          console.error(`Bot ${botId} ended with status: ${status.code} - ${status.message}`);
+        }
+      }
+    } catch (err) {
+      console.error(`Error polling bot ${botId}:`, err.message);
+    }
+  }, 15000);
+
+  activeBotPollers[botId] = interval;
+}
+
+async function fetchAndSaveBotTranscript(botId, meetingId) {
+  try {
+    console.log(`Fetching transcript for bot ${botId}`);
+    const paragraphs = await recallBot.getBotTranscript(botId);
+    const transcript = recallBot.convertTranscript(paragraphs);
+    console.log(`Got ${transcript.length} transcript entries for bot ${botId}`);
+
+    await fileOperationManager.scheduleOperation((data) => {
+      const meeting = data.pastMeetings.find(m => m.id === meetingId);
+      if (meeting) {
+        meeting.transcript = transcript;
+        meeting.recordingComplete = true;
+        meeting.recordingEndTime = new Date().toISOString();
+      }
+      return data;
+    });
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('recording-completed', meetingId);
+      mainWindow.webContents.send('bot-status-update', {
+        botId, meetingId, code: 'done', message: 'Transcript ready'
+      });
+    }
+  } catch (err) {
+    console.error(`Error fetching transcript for bot ${botId}:`, err);
+  }
+}
+
 // Handle loading meetings data
 ipcMain.handle('loadMeetingsData', async () => {
   try {

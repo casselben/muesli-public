@@ -27,6 +27,12 @@
         <div class="header-right">
           <button class="btn new-note-btn" id="newNoteBtn">Record In-person Meeting</button>
           <button class="btn join-meeting-btn" id="joinMeetingBtn">Record Meeting</button>
+          <button class="btn send-bot-btn" id="sendBotBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-right:4px;">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/>
+            </svg>
+            Send Bot
+          </button>
           <button id="toggleSidebar" class="btn toggle-sidebar-btn" style="display: none;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M3 18H21V16H3V18ZM3 13H21V11H3V13ZM3 6V8H21V6H3Z" fill="#666666"/>
@@ -192,6 +198,23 @@ Chat with meeting transcript: https://notes.granola.ai/d/393a95cf-4788-4a47-9deb
               </svg>
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Send Bot Modal -->
+    <div class="send-bot-modal-overlay" id="sendBotModal" style="display:none;">
+      <div class="send-bot-modal">
+        <h3>Send Bot to Meeting</h3>
+        <p class="send-bot-description">Paste a Zoom, Google Meet, or Teams meeting URL and a Recall bot will join to record and transcribe.</p>
+        <input type="text" id="botMeetingUrlInput" class="send-bot-input" placeholder="https://zoom.us/j/... or https://meet.google.com/..." />
+        <div class="send-bot-status" id="botStatusBadge" style="display:none;">
+          <span class="bot-status-dot"></span>
+          <span class="bot-status-text"></span>
+        </div>
+        <div class="send-bot-actions">
+          <button class="btn send-bot-cancel" id="sendBotCancel">Cancel</button>
+          <button class="btn send-bot-submit" id="sendBotSubmit">Send Bot</button>
         </div>
       </div>
     </div>

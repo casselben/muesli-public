@@ -36,5 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMeetingTitleUpdated: (callback) => ipcRenderer.on('meeting-title-updated', (_, data) => callback(data)),
   getActiveRecordingId: (noteId) => ipcRenderer.invoke('getActiveRecordingId', noteId),
   getOpenRouterKey: () => ipcRenderer.invoke('getOpenRouterKey'),
-  pushTasksToAsana: (tasks) => ipcRenderer.invoke('pushTasksToAsana', tasks)
+  pushTasksToAsana: (tasks) => ipcRenderer.invoke('pushTasksToAsana', tasks),
+  sendRecallBot: (meetingUrl) => ipcRenderer.invoke('sendRecallBot', meetingUrl),
+  getRecallBotStatus: (botId) => ipcRenderer.invoke('getRecallBotStatus', botId),
+  onBotStatusUpdate: (callback) => ipcRenderer.on('bot-status-update', (_, data) => callback(data))
 });
