@@ -77,16 +77,17 @@ const createWindow = () => {
   if (process.env.NODE_ENV === 'development') {
     // mainWindow.webContents.openDevTools();
   }
-
-  // Listen for navigation events
-  ipcMain.on('navigate', (event, page) => {
-    if (page === 'note-editor') {
-      mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY + '/../note-editor/index.html');
-    } else if (page === 'home') {
-      mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
-    }
-  });
 };
+
+// Listen for navigation events (registered once, outside createWindow)
+ipcMain.on('navigate', (event, page) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (page === 'note-editor') {
+    mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY + '/../note-editor/index.html');
+  } else if (page === 'home') {
+    mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
+  }
+});
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
@@ -147,6 +148,25 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+// Clean up SDK resources and active recordings before quitting
+app.on('before-quit', async () => {
+  console.log('App quitting, cleaning up...');
+  try {
+    // Stop any active recordings
+    const allRecordings = activeRecordings.getAll();
+    for (const [recordingId, info] of Object.entries(allRecordings)) {
+      try {
+        console.log(`Stopping active recording ${recordingId} before quit`);
+        await RecallAiSdk.stopRecording({ windowId: recordingId });
+      } catch (err) {
+        console.error(`Error stopping recording ${recordingId} on quit:`, err);
+      }
+    }
+  } catch (error) {
+    console.error('Error during cleanup on quit:', error);
   }
 });
 
@@ -228,8 +248,8 @@ const fileOperationManager = {
       const fileData = await fs.promises.readFile(meetingsFilePath, 'utf8');
       const data = JSON.parse(fileData);
 
-      // Update cache
-      this.cachedData = data;
+      // Store a deep clone in cache so callers can't mutate it
+      this.cachedData = JSON.parse(JSON.stringify(data));
       this.lastReadTime = now;
 
       return data;
@@ -265,40 +285,35 @@ const fileOperationManager = {
 
     this.isProcessing = true;
 
+    let nextOp = null;
     try {
       // Get the next operation
-      const nextOp = this.pendingOperations.shift();
+      nextOp = this.pendingOperations.shift();
 
       // Read the latest data
       const currentData = await this.readMeetingsData();
 
-      try {
-        // Execute the operation function with the current data
-        const updatedData = await nextOp.operationFn(currentData);
+      // Execute the operation function with the current data
+      const updatedData = await nextOp.operationFn(currentData);
 
-        // If the operation returned data, write it
-        if (updatedData) {
-          // Update cache immediately
-          this.cachedData = updatedData;
-          this.lastReadTime = Date.now();
+      // If the operation returned data, write it
+      if (updatedData) {
+        // Update cache immediately
+        this.cachedData = JSON.parse(JSON.stringify(updatedData));
+        this.lastReadTime = Date.now();
 
-          // Write to file
-          await fs.promises.writeFile(meetingsFilePath, JSON.stringify(updatedData, null, 2));
-        }
-
-        // Resolve the operation's promise
-        nextOp.resolve({ success: true });
-      } catch (opError) {
-        console.error('Error in file operation:', opError);
-        nextOp.reject(opError);
+        // Write to file
+        await fs.promises.writeFile(meetingsFilePath, JSON.stringify(updatedData, null, 2));
       }
+
+      // Resolve the operation's promise
+      nextOp.resolve({ success: true });
     } catch (error) {
       console.error('Error in file operation manager:', error);
 
-      // If there was an operation that failed, reject its promise
-      if (this.pendingOperations.length > 0) {
-        const failedOp = this.pendingOperations.shift();
-        failedOp.reject(error);
+      // Reject the correct operation's promise
+      if (nextOp) {
+        nextOp.reject(error);
       }
     } finally {
       this.isProcessing = false;
@@ -357,7 +372,11 @@ function initSDK() {
   RecallAiSdk.addEventListener('meeting-detected', (evt) => {
     console.log("Meeting detected:", evt);
 
-    // Log the meeting detected event
+    if (!evt.window || evt.window.id == null) {
+      console.warn('Meeting detected event missing window or window.id, skipping');
+      return;
+    }
+
     sdkLogger.logEvent('meeting-detected', {
       platform: evt.window.platform,
       windowId: evt.window.id
@@ -405,7 +424,11 @@ function initSDK() {
 
     const { window } = evt;
 
-    // Log the meeting updated event with the URL for tracking purposes
+    if (!window || window.id == null) {
+      console.warn('Meeting updated event missing window or window.id, skipping');
+      return;
+    }
+
     sdkLogger.logEvent('meeting-updated', {
       platform: window.platform,
       windowId: window.id,
@@ -413,8 +436,7 @@ function initSDK() {
       url: window.url
     });
 
-    // Update the detectedMeeting object with the new information
-    if (detectedMeeting && detectedMeeting.window.id === window.id) {
+    if (detectedMeeting && detectedMeeting.window && detectedMeeting.window.id === window.id) {
       detectedMeeting = {
         ...detectedMeeting,
         window: {
@@ -434,31 +456,23 @@ function initSDK() {
           console.log("Updating existing note title for:", noteId);
           
           try {
-            // Read the current meetings data
-            const meetingsData = await fileOperationManager.readMeetingsData();
-            
-            // Find the meeting in pastMeetings
-            const meeting = meetingsData.pastMeetings.find(m => m.id === noteId);
-            
-            if (meeting) {
-              const oldTitle = meeting.title;
-              
-              // Update the title
-              meeting.title = window.title;
-              
-              // Save the updated data
-              await fileOperationManager.writeData(meetingsData);
-              console.log(`Successfully updated meeting title from "${oldTitle}" to "${window.title}"`);
-              
-              // Notify the renderer to update the UI
-              if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('meeting-title-updated', {
-                  meetingId: noteId,
-                  newTitle: window.title
-                });
+            await fileOperationManager.scheduleOperation((meetingsData) => {
+              const meeting = meetingsData.pastMeetings.find(m => m.id === noteId);
+              if (meeting) {
+                const oldTitle = meeting.title;
+                meeting.title = window.title;
+                console.log(`Successfully updated meeting title from "${oldTitle}" to "${window.title}"`);
+              } else {
+                console.error("Meeting not found in pastMeetings with ID:", noteId);
               }
-            } else {
-              console.error("Meeting not found in pastMeetings with ID:", noteId);
+              return meetingsData;
+            });
+              
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('meeting-title-updated', {
+                meetingId: noteId,
+                newTitle: window.title
+              });
             }
           } catch (error) {
             console.error("Error updating meeting title:", error);
@@ -488,7 +502,10 @@ function initSDK() {
       delete global.activeMeetingIds[evt.window.id];
     }
 
-    detectedMeeting = null;
+    // Only clear detectedMeeting if this is the one we're tracking
+    if (detectedMeeting && detectedMeeting.window && detectedMeeting.window.id === evt.window.id) {
+      detectedMeeting = null;
+    }
 
     // Send the meeting closed status to the renderer process
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -583,7 +600,14 @@ function initSDK() {
 
   // Track SDK state changes
   RecallAiSdk.addEventListener('sdk-state-change', async (evt) => {
-    const { sdk: { state: { code } }, window } = evt;
+    const code = evt.sdk?.state?.code;
+    const window = evt.window;
+
+    if (code == null) {
+      console.warn('SDK state change event missing state code, skipping');
+      return;
+    }
+
     console.log("Recording state changed:", code, "for window:", window?.id);
 
     // Log the SDK sdk-state-change event
@@ -724,43 +748,31 @@ ipcMain.handle('deleteMeeting', async (event, meetingId) => {
   try {
     console.log(`Deleting meeting with ID: ${meetingId}`);
 
-    // Read current data
-    const fileData = await fs.promises.readFile(meetingsFilePath, 'utf8');
-    const meetingsData = JSON.parse(fileData);
-
-    // Find the meeting
-    const pastMeetingIndex = meetingsData.pastMeetings.findIndex(meeting => meeting.id === meetingId);
-    const upcomingMeetingIndex = meetingsData.upcomingMeetings.findIndex(meeting => meeting.id === meetingId);
-
-    let meetingDeleted = false;
     let recordingId = null;
+    let meetingDeleted = false;
 
-    // Remove from past meetings if found
-    if (pastMeetingIndex !== -1) {
-      // Store the recording ID for later cleanup if needed
-      recordingId = meetingsData.pastMeetings[pastMeetingIndex].recordingId;
+    await fileOperationManager.scheduleOperation((meetingsData) => {
+      const pastMeetingIndex = meetingsData.pastMeetings.findIndex(meeting => meeting.id === meetingId);
+      const upcomingMeetingIndex = meetingsData.upcomingMeetings.findIndex(meeting => meeting.id === meetingId);
 
-      // Remove the meeting
-      meetingsData.pastMeetings.splice(pastMeetingIndex, 1);
-      meetingDeleted = true;
-    }
+      if (pastMeetingIndex !== -1) {
+        recordingId = meetingsData.pastMeetings[pastMeetingIndex].recordingId;
+        meetingsData.pastMeetings.splice(pastMeetingIndex, 1);
+        meetingDeleted = true;
+      }
 
-    // Remove from upcoming meetings if found
-    if (upcomingMeetingIndex !== -1) {
-      // Store the recording ID for later cleanup if needed
-      recordingId = meetingsData.upcomingMeetings[upcomingMeetingIndex].recordingId;
+      if (upcomingMeetingIndex !== -1) {
+        recordingId = meetingsData.upcomingMeetings[upcomingMeetingIndex].recordingId;
+        meetingsData.upcomingMeetings.splice(upcomingMeetingIndex, 1);
+        meetingDeleted = true;
+      }
 
-      // Remove the meeting
-      meetingsData.upcomingMeetings.splice(upcomingMeetingIndex, 1);
-      meetingDeleted = true;
-    }
+      return meetingDeleted ? meetingsData : null;
+    });
 
     if (!meetingDeleted) {
       return { success: false, error: 'Meeting not found' };
     }
-
-    // Save the updated data
-    await fileOperationManager.writeData(meetingsData);
 
     // If the meeting had a recording, cleanup the reference in the global tracking
     if (recordingId && global.activeMeetingIds && global.activeMeetingIds[recordingId]) {
@@ -781,55 +793,48 @@ ipcMain.handle('generateMeetingSummary', async (event, meetingId) => {
   try {
     console.log(`Manual summary generation requested for meeting: ${meetingId}`);
 
-    // Read current data
-    const fileData = await fs.promises.readFile(meetingsFilePath, 'utf8');
-    const meetingsData = JSON.parse(fileData);
+    // Read meeting data atomically through the queue
+    const meetingsData = await fileOperationManager.readMeetingsData();
 
-    // Find the meeting
-    const pastMeetingIndex = meetingsData.pastMeetings.findIndex(meeting => meeting.id === meetingId);
+    const meeting = meetingsData.pastMeetings.find(m => m.id === meetingId);
 
-    if (pastMeetingIndex === -1) {
+    if (!meeting) {
       return { success: false, error: 'Meeting not found' };
     }
 
-    const meeting = meetingsData.pastMeetings[pastMeetingIndex];
-
-    // Check if there's a transcript to summarize
     if (!meeting.transcript || meeting.transcript.length === 0) {
-      return {
-        success: false,
-        error: 'No transcript available for this meeting'
-      };
+      return { success: false, error: 'No transcript available for this meeting' };
     }
 
-    // Log summary generation to console instead of showing a notification
     console.log('Generating AI summary for meeting: ' + meetingId);
 
-    // Generate the summary
-    const summary = await generateMeetingSummary(meeting);
+    let summary;
+    try {
+      summary = await generateMeetingSummary(meeting);
+    } catch (summaryError) {
+      console.error('AI summary generation failed:', summaryError);
+      return { success: false, error: summaryError.message || 'Summary generation failed' };
+    }
 
-    // Get meeting title for use in the new content
     const meetingTitle = meeting.title || "Meeting Notes";
 
-    // Create content with the AI-generated summary
-    meeting.content = `# ${meetingTitle}\n\n${summary}`;
-
-    meeting.hasSummary = true;
-
-    // Save the updated data with summary
-    await fileOperationManager.writeData(meetingsData);
+    // Atomically update just the fields we need via scheduleOperation
+    await fileOperationManager.scheduleOperation((currentData) => {
+      const m = currentData.pastMeetings.find(m => m.id === meetingId);
+      if (m) {
+        m.content = `# ${meetingTitle}\n\n${summary}`;
+        m.hasSummary = true;
+      }
+      return currentData;
+    });
 
     console.log('Updated meeting note with AI summary');
 
-    // Notify the renderer to refresh the note if it's open
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('summary-generated', meetingId);
     }
 
-    return {
-      success: true,
-      summary
-    };
+    return { success: true, summary };
   } catch (error) {
     console.error('Error generating meeting summary:', error);
     return { success: false, error: error.message };
@@ -841,41 +846,23 @@ ipcMain.handle('startManualRecording', async (event, meetingId) => {
   try {
     console.log(`Starting manual desktop recording for meeting: ${meetingId}`);
 
-    // Read current data
-    const fileData = await fs.promises.readFile(meetingsFilePath, 'utf8');
-    const meetingsData = JSON.parse(fileData);
+    // Verify the meeting exists
+    const meetingsData = await fileOperationManager.readMeetingsData();
+    const meeting = meetingsData.pastMeetings.find(m => m.id === meetingId);
 
-    // Find the meeting
-    const pastMeetingIndex = meetingsData.pastMeetings.findIndex(meeting => meeting.id === meetingId);
-
-    if (pastMeetingIndex === -1) {
+    if (!meeting) {
       return { success: false, error: 'Meeting not found' };
     }
 
-    const meeting = meetingsData.pastMeetings[pastMeetingIndex];
-
     try {
-      // Prepare desktop audio recording - this is the key difference from our previous implementation
-      // It returns a key that we use as the window ID
-
-      // Log the prepareDesktopAudioRecording API call
       sdkLogger.logApiCall('prepareDesktopAudioRecording');
 
       const key = await RecallAiSdk.prepareDesktopAudioRecording();
       console.log('Prepared desktop audio recording with key:', key);
 
-      // Create a recording token
       const uploadData = await createDesktopSdkUpload();
       if (!uploadData || !uploadData.upload_token) {
         return { success: false, error: 'Failed to create recording token' };
-      }
-
-      // Store the recording ID in the meeting
-      meeting.recordingId = key;
-
-      // Initialize transcript array if not present
-      if (!meeting.transcript) {
-        meeting.transcript = [];
       }
 
       // Store tracking info for the recording
@@ -885,19 +872,25 @@ ipcMain.handle('startManualRecording', async (event, meetingId) => {
         noteId: meetingId
       };
 
-      // Register the recording in our active recordings tracker
       activeRecordings.addRecording(key, meetingId, 'Desktop Recording');
 
-      // Save the updated data
-      await fileOperationManager.writeData(meetingsData);
+      // Atomically update the meeting with recording info
+      await fileOperationManager.scheduleOperation((currentData) => {
+        const m = currentData.pastMeetings.find(m => m.id === meetingId);
+        if (m) {
+          m.recordingId = key;
+          if (!m.transcript) {
+            m.transcript = [];
+          }
+        }
+        return currentData;
+      });
 
-      // Start recording with the key from prepareDesktopAudioRecording
       console.log('Starting desktop recording with key:', key);
 
-      // Log the startRecording API call
       sdkLogger.logApiCall('startRecording', {
         windowId: key,
-        uploadToken: `${uploadData.upload_token.substring(0, 8)}...` // Log truncated token for security
+        uploadToken: `${uploadData.upload_token.substring(0, 8)}...`
       });
 
       await RecallAiSdk.startRecording({
@@ -905,10 +898,7 @@ ipcMain.handle('startManualRecording', async (event, meetingId) => {
         uploadToken: uploadData.upload_token
       });
 
-      return {
-        success: true,
-        recordingId: key
-      };
+      return { success: true, recordingId: key };
     } catch (sdkError) {
       console.error('RecallAI SDK error:', sdkError);
       return { success: false, error: 'Failed to prepare desktop recording: ' + sdkError.message };
@@ -953,55 +943,38 @@ ipcMain.handle('generateMeetingSummaryStreaming', async (event, meetingId) => {
   try {
     console.log(`Streaming summary generation requested for meeting: ${meetingId}`);
 
-    // Read current data
-    const fileData = await fs.promises.readFile(meetingsFilePath, 'utf8');
-    const meetingsData = JSON.parse(fileData);
+    // Read meeting data atomically
+    const meetingsData = await fileOperationManager.readMeetingsData();
+    const meeting = meetingsData.pastMeetings.find(m => m.id === meetingId);
 
-    // Find the meeting
-    const pastMeetingIndex = meetingsData.pastMeetings.findIndex(meeting => meeting.id === meetingId);
-
-    if (pastMeetingIndex === -1) {
+    if (!meeting) {
       return { success: false, error: 'Meeting not found' };
     }
 
-    const meeting = meetingsData.pastMeetings[pastMeetingIndex];
-
-    // Check if there's a transcript to summarize
     if (!meeting.transcript || meeting.transcript.length === 0) {
-      return {
-        success: false,
-        error: 'No transcript available for this meeting'
-      };
+      return { success: false, error: 'No transcript available for this meeting' };
     }
 
-    // Log summary generation to console instead of showing a notification
     console.log('Generating streaming summary for meeting: ' + meetingId);
 
-    // Get meeting title for use in the new content
     const meetingTitle = meeting.title || "Meeting Notes";
 
-    // Initial content with placeholders
-    meeting.content = `# ${meetingTitle}\n\nGenerating summary...`;
-
     // Update the note on the frontend right away
-    mainWindow.webContents.send('summary-update', {
-      meetingId,
-      content: meeting.content
-    });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('summary-update', {
+        meetingId,
+        content: `# ${meetingTitle}\n\nGenerating summary...`
+      });
+    }
 
     // Create progress callback for streaming updates
     const streamProgress = (currentText) => {
-      // Update content with current streaming text
-      meeting.content = `# ${meetingTitle}\n\n## AI-Generated Meeting Summary\n${currentText}`;
-
-      // Send immediate update to renderer - don't debounce or delay this
       if (mainWindow && !mainWindow.isDestroyed()) {
         try {
-          // Force immediate send of the update
           mainWindow.webContents.send('summary-update', {
             meetingId,
-            content: meeting.content,
-            timestamp: Date.now() // Add timestamp to ensure uniqueness
+            content: `# ${meetingTitle}\n\n## AI-Generated Meeting Summary\n${currentText}`,
+            timestamp: Date.now()
           });
         } catch (err) {
           console.error('Error sending streaming update to renderer:', err);
@@ -1009,25 +982,31 @@ ipcMain.handle('generateMeetingSummaryStreaming', async (event, meetingId) => {
       }
     };
 
-    // Generate summary with streaming
-    const summary = await generateMeetingSummary(meeting, streamProgress);
+    let summary;
+    try {
+      summary = await generateMeetingSummary(meeting, streamProgress);
+    } catch (summaryError) {
+      console.error('Streaming AI summary generation failed:', summaryError);
+      return { success: false, error: summaryError.message || 'Summary generation failed' };
+    }
 
-    // Make sure the final content is set correctly
-    meeting.content = `# ${meetingTitle}\n\n${summary}`;
-    meeting.hasSummary = true;
-
-    // Save the updated data with summary
-    await fileOperationManager.writeData(meetingsData);
+    // Atomically save the final summary without overwriting concurrent transcript writes
+    await fileOperationManager.scheduleOperation((currentData) => {
+      const m = currentData.pastMeetings.find(m => m.id === meetingId);
+      if (m) {
+        m.content = `# ${meetingTitle}\n\n${summary}`;
+        m.hasSummary = true;
+      }
+      return currentData;
+    });
 
     console.log('Updated meeting note with AI summary (streaming)');
 
-    // Final notification to renderer
-    mainWindow.webContents.send('summary-generated', meetingId);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('summary-generated', meetingId);
+    }
 
-    return {
-      success: true,
-      summary
-    };
+    return { success: true, summary };
   } catch (error) {
     console.error('Error generating streaming summary:', error);
     return { success: false, error: error.message };
@@ -1055,43 +1034,31 @@ ipcMain.handle('loadMeetingsData', async () => {
 async function createMeetingNoteAndRecord(platformName) {
   console.log("Creating meeting note for platform:", platformName);
   try {
-    if (!detectedMeeting) {
+    if (!detectedMeeting || !detectedMeeting.window) {
       console.error('No active meeting detected');
-      return;
+      return null;
     }
-    console.log("Detected meeting info:", detectedMeeting.window.id, detectedMeeting.window.platform);
 
-    // Store the meeting window ID for later reference with transcript events
+    // Capture the window ID immediately so it survives across await boundaries
+    // (meeting-closed can set detectedMeeting = null at any time)
+    const meetingWindowId = detectedMeeting.window.id;
+    const meetingWindowTitle = detectedMeeting.window.title;
+    const meetingWindowPlatform = detectedMeeting.window.platform;
+
+    console.log("Detected meeting info:", meetingWindowId, meetingWindowPlatform);
+
     global.activeMeetingIds = global.activeMeetingIds || {};
-    global.activeMeetingIds[detectedMeeting.window.id] = { platformName };
+    global.activeMeetingIds[meetingWindowId] = { platformName };
 
-    // Read the current meetings data
-    let meetingsData;
-    try {
-      const fileData = await fs.promises.readFile(meetingsFilePath, 'utf8');
-      meetingsData = JSON.parse(fileData);
-    } catch (error) {
-      console.error('Error reading meetings data:', error);
-      meetingsData = { upcomingMeetings: [], pastMeetings: [] };
-    }
-
-    // Generate a unique ID for the new meeting
     const id = 'meeting-' + Date.now();
-
-    // Current date and time
     const now = new Date();
 
-    // Use the actual meeting title if available, otherwise fall back to platform name + time
-    // NOTE: meeting-updated may fire after the user clicks to join, so this might not be
-    // populated yet. The meeting-updated handler will update the title retroactively if needed.
-    const meetingTitle = detectedMeeting.window.title 
-      ? detectedMeeting.window.title 
+    const meetingTitle = meetingWindowTitle 
+      ? meetingWindowTitle 
       : `${platformName} Meeting - ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
-    // Create a template for the note content
     const template = `# ${meetingTitle}\nRecording: In Progress...`;
 
-    // Create a new meeting object
     const newMeeting = {
       id: id,
       type: 'document',
@@ -1101,116 +1068,82 @@ async function createMeetingNoteAndRecord(platformName) {
       date: now.toISOString(),
       participants: [],
       content: template,
-      recordingId: detectedMeeting.window.id,
+      recordingId: meetingWindowId,
       platform: platformName,
-      transcript: [] // Initialize an empty array for transcript data
+      transcript: []
     };
 
-    // Update the active meeting tracking with the note ID
-    if (global.activeMeetingIds && global.activeMeetingIds[detectedMeeting.window.id]) {
-      global.activeMeetingIds[detectedMeeting.window.id].noteId = id;
+    if (global.activeMeetingIds[meetingWindowId]) {
+      global.activeMeetingIds[meetingWindowId].noteId = id;
     }
 
-    // Register this meeting in our active recordings tracker (even before starting)
-    // This ensures the UI knows about it immediately
-    activeRecordings.addRecording(detectedMeeting.window.id, id, platformName);
+    activeRecordings.addRecording(meetingWindowId, id, platformName);
 
-    // Add to pastMeetings
-    meetingsData.pastMeetings.unshift(newMeeting);
+    // Atomically add the meeting to the data file
+    console.log(`Saving meeting data with ID: ${id}`);
+    await fileOperationManager.scheduleOperation((currentData) => {
+      currentData.pastMeetings.unshift(newMeeting);
+      return currentData;
+    });
 
-    // Save the updated data
-    console.log(`Saving meeting data to ${meetingsFilePath} with ID: ${id}`);
-    await fileOperationManager.writeData(meetingsData);
+    console.log(`Successfully saved meeting ${id}`);
 
-    // Verify the file was written by reading it back
-    try {
-      const verifyData = await fs.promises.readFile(meetingsFilePath, 'utf8');
-      const parsedData = JSON.parse(verifyData);
-      const verifyMeeting = parsedData.pastMeetings.find(m => m.id === id);
-
-      if (verifyMeeting) {
-        console.log(`Successfully verified meeting ${id} was saved`);
-
-        // Tell the renderer to open the new note
+    // Tell the renderer to open the new note
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      setTimeout(() => {
+        console.log(`Sending IPC message to open meeting note: ${id}`);
         if (mainWindow && !mainWindow.isDestroyed()) {
-          // We need a significant delay to make sure the file is fully processed and loaded
-          // This ensures the renderer has time to process the file and recognize the new meeting
-          setTimeout(async () => {
-            try {
-              // Force a file reload before sending the message
-              await fs.promises.readFile(meetingsFilePath, 'utf8');
-
-              console.log(`Sending IPC message to open meeting note: ${id}`);
-              mainWindow.webContents.send('open-meeting-note', id);
-
-              // Send another message after 2 seconds as a backup
-              setTimeout(() => {
-                console.log(`Sending backup IPC message to open meeting note: ${id}`);
-                mainWindow.webContents.send('open-meeting-note', id);
-              }, 2000);
-            } catch (error) {
-              console.error('Error before sending open-meeting-note message:', error);
-            }
-          }, 1500); // Increased delay for safety
+          mainWindow.webContents.send('open-meeting-note', id);
         }
-      } else {
-        console.error(`Meeting ${id} not found in saved data!`);
-      }
-    } catch (verifyError) {
-      console.error('Error verifying saved data:', verifyError);
+
+        // Send another message after 2 seconds as a backup
+        setTimeout(() => {
+          console.log(`Sending backup IPC message to open meeting note: ${id}`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('open-meeting-note', id);
+          }
+        }, 2000);
+      }, 1500);
     }
 
-    // Start recording with upload token
-    console.log('Starting recording for meeting:', detectedMeeting.window.id);
+    // Start recording with upload token (using captured meetingWindowId)
+    console.log('Starting recording for meeting:', meetingWindowId);
 
     try {
-      // Get upload token
       const uploadData = await createDesktopSdkUpload();
 
       if (!uploadData || !uploadData.upload_token) {
         console.error('Failed to get upload token. Recording without upload token.');
-
-        // Log the startRecording API call (no token fallback)
-        sdkLogger.logApiCall('startRecording', {
-          windowId: detectedMeeting.window.id
-        });
-
-        await RecallAiSdk.startRecording({
-          windowId: detectedMeeting.window.id
-        });
+        sdkLogger.logApiCall('startRecording', { windowId: meetingWindowId });
+        await RecallAiSdk.startRecording({ windowId: meetingWindowId });
       } else {
         console.log('Starting recording with upload token:', uploadData.upload_token);
-
-        // Log the startRecording API call with upload token
         sdkLogger.logApiCall('startRecording', {
-          windowId: detectedMeeting.window.id,
-          uploadToken: `${uploadData.upload_token.substring(0, 8)}...` // Log truncated token for security
+          windowId: meetingWindowId,
+          uploadToken: `${uploadData.upload_token.substring(0, 8)}...`
         });
-
         await RecallAiSdk.startRecording({
-          windowId: detectedMeeting.window.id,
+          windowId: meetingWindowId,
           uploadToken: uploadData.upload_token
         });
       }
     } catch (error) {
       console.error('Error starting recording with upload token:', error);
-
-      // Fallback to recording without token
-
-      // Log the startRecording API call (error fallback)
       sdkLogger.logApiCall('startRecording', {
-        windowId: detectedMeeting.window.id,
+        windowId: meetingWindowId,
         error: 'Fallback after error'
       });
-
-      await RecallAiSdk.startRecording({
-        windowId: detectedMeeting.window.id
-      });
+      try {
+        await RecallAiSdk.startRecording({ windowId: meetingWindowId });
+      } catch (fallbackError) {
+        console.error('Fallback recording start also failed:', fallbackError);
+      }
     }
 
     return id;
   } catch (error) {
     console.error('Error creating meeting note:', error);
+    return null;
   }
 }
 
@@ -1598,97 +1531,72 @@ ${transcriptText}`
   } catch (error) {
     console.error('Error generating meeting summary:', error);
 
-    // Check if it's an OpenRouter/OpenAI specific error
-    if (error.status) {
-      return `Error generating summary: API returned status ${error.status}: ${error.message}`;
-    } else if (error.response) {
-      // Handle errors with a response object
-      return `Error generating summary: ${error.response.status} - ${error.response.data?.error?.message || error.message}`;
-    } else {
-      // Default error handling
-      return `Error generating summary: ${error.message}`;
-    }
+    // Re-throw so callers can distinguish errors from valid summaries
+    throw error;
   }
 }
 
 // Function to update a note with recording information when recording ends
 async function updateNoteWithRecordingInfo(recordingId) {
   try {
-    // Read the current meetings data
-    let meetingsData;
-    try {
-      const fileData = await fs.promises.readFile(meetingsFilePath, 'utf8');
-      meetingsData = JSON.parse(fileData);
-    } catch (error) {
-      console.error('Error reading meetings data:', error);
-      return;
-    }
-
-    // Find the meeting note with this recording ID
-    const noteIndex = meetingsData.pastMeetings.findIndex(meeting =>
-      meeting.recordingId === recordingId
-    );
-
-    if (noteIndex === -1) {
-      console.log('No meeting note found for recording ID:', recordingId);
-      return;
-    }
-
-    // Format current date
     const now = new Date();
     const formattedDate = now.toLocaleString();
+    let meetingId = null;
+    let meetingTitle = null;
+    let hasTranscript = false;
+    let meetingForSummary = null;
 
-    // Update the meeting note content
-    const meeting = meetingsData.pastMeetings[noteIndex];
-    const content = meeting.content;
+    // Atomically update the recording status
+    await fileOperationManager.scheduleOperation((meetingsData) => {
+      const noteIndex = meetingsData.pastMeetings.findIndex(meeting =>
+        meeting.recordingId === recordingId
+      );
 
-    // Replace the "Recording: In Progress..." line with completed information
-    let updatedContent = content.replace(
-      "Recording: In Progress...",
-      `Recording: Completed at ${formattedDate}\n`
-    );
+      if (noteIndex === -1) {
+        console.log('No meeting note found for recording ID:', recordingId);
+        return null;
+      }
 
-    // Update the meeting object
-    meeting.content = updatedContent;
-    meeting.recordingComplete = true;
-    meeting.recordingEndTime = now.toISOString();
+      const meeting = meetingsData.pastMeetings[noteIndex];
+      meetingId = meeting.id;
+      meetingTitle = meeting.title || "Meeting Notes";
+      hasTranscript = meeting.transcript && meeting.transcript.length > 0;
 
-    // Save the initial update
-    await fileOperationManager.writeData(meetingsData);
+      // Take a snapshot of transcript for summary generation
+      if (hasTranscript) {
+        meetingForSummary = JSON.parse(JSON.stringify(meeting));
+      }
+
+      meeting.content = meeting.content.replace(
+        "Recording: In Progress...",
+        `Recording: Completed at ${formattedDate}\n`
+      );
+      meeting.recordingComplete = true;
+      meeting.recordingEndTime = now.toISOString();
+
+      return meetingsData;
+    });
+
+    if (!meetingId) return;
 
     // Generate AI summary if there's a transcript
-    if (meeting.transcript && meeting.transcript.length > 0) {
-      console.log(`Generating AI summary for meeting ${meeting.id}...`);
+    if (hasTranscript && meetingForSummary) {
+      console.log(`Generating AI summary for meeting ${meetingId}...`);
 
-      // Log summary generation to console instead of showing a notification
-      console.log('Generating AI summary for meeting: ' + meeting.id);
-
-      // Get meeting title for use in the new content
-      const meetingTitle = meeting.title || "Meeting Notes";
-
-      // Create initial content with placeholder
-      meeting.content = `# ${meetingTitle}\nGenerating summary...`;
-
-      // Notify any open editors immediately
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('summary-update', {
-          meetingId: meeting.id,
-          content: meeting.content
+          meetingId,
+          content: `# ${meetingTitle}\nGenerating summary...`
         });
       }
 
-      // Create progress callback for streaming updates
       const streamProgress = (currentText) => {
-        // Update content with current streaming text
-        meeting.content = `# ${meetingTitle}\n\n${currentText}`;
-
-        // Send immediate update to renderer if note is open
         if (mainWindow && !mainWindow.isDestroyed()) {
           try {
             mainWindow.webContents.send('summary-update', {
-              meetingId: meeting.id,
-              content: meeting.content,
-              timestamp: Date.now() // Add timestamp to ensure uniqueness
+              meetingId,
+              content: `# ${meetingTitle}\n\n${currentText}`,
+              timestamp: Date.now()
             });
           } catch (err) {
             console.error('Error sending streaming update to renderer:', err);
@@ -1696,18 +1604,29 @@ async function updateNoteWithRecordingInfo(recordingId) {
         }
       };
 
-      // Generate the summary with streaming updates
-      const summary = await generateMeetingSummary(meeting, streamProgress);
+      let finalContent;
+      let hasSummary;
+      try {
+        const summary = await generateMeetingSummary(meetingForSummary, streamProgress);
+        finalContent = `${summary}`;
+        hasSummary = true;
+      } catch (summaryError) {
+        console.error('Failed to generate AI summary:', summaryError);
+        finalContent = `# ${meetingTitle}\n\nSummary generation failed. You can retry using the Auto button.`;
+        hasSummary = false;
+      }
 
-      // Set the content to just the summary
-      meeting.content = `${summary}`;
+      // Atomically save the summary without overwriting concurrent transcript writes
+      await fileOperationManager.scheduleOperation((currentData) => {
+        const m = currentData.pastMeetings.find(m => m.id === meetingId);
+        if (m) {
+          m.content = finalContent;
+          m.hasSummary = hasSummary;
+        }
+        return currentData;
+      });
 
-      meeting.hasSummary = true;
-
-      // Save the updated data with summary
-      await fileOperationManager.writeData(meetingsData);
-
-      console.log('Updated meeting note with AI summary');
+      console.log('Updated meeting note after recording ended');
     }
 
     // If the note is currently open, notify the renderer to refresh it

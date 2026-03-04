@@ -9,12 +9,11 @@ const RECALLAI_API_URL = process.env.RECALLAI_API_URL || 'https://api.recall.ai'
 const RECALLAI_API_KEY = process.env.RECALLAI_API_KEY;
 
 app.get('/start-recording', async (req, res) => {
-    console.log(`Creating upload token with API key: ${RECALLAI_API_KEY.slice(0,4)}...`);
-
     if (!RECALLAI_API_KEY) {
         console.error("RECALLAI_API_KEY is missing! Set it in .env file");
-        return res.json({ status: 'error', message: 'RECALLAI_API_KEY is missing' });
+        return res.status(500).json({ status: 'error', message: 'RECALLAI_API_KEY is missing' });
     }
+    console.log(`Creating upload token with API key: ${RECALLAI_API_KEY.slice(0,4)}...`);
 
     const url = `${RECALLAI_API_URL}/api/v1/sdk_upload/`;
 
@@ -46,7 +45,7 @@ app.get('/start-recording', async (req, res) => {
         res.json({ status: 'success', upload_token: response.data.upload_token });
     } catch (e) {
         console.error("Error creating upload token:", JSON.stringify(e.errors || e.response?.data || e.message));
-        res.json({ status: 'error', message: e.message });
+        res.status(500).json({ status: 'error', message: e.message });
     }
 });
 

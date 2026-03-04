@@ -81,20 +81,31 @@ function updateRecordingButtonUI(isActive, recordingId) {
 // Function to format date for section headers
 function formatDateHeader(dateString) {
   const date = new Date(dateString);
+  if (isNaN(date.getTime())) return 'Unknown Date';
+
   const now = new Date();
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
 
-  // Check if date is today, yesterday, or earlier
   if (date.toDateString() === now.toDateString()) {
     return 'Today';
   } else if (date.toDateString() === yesterday.toDateString()) {
     return 'Yesterday';
   } else {
-    // Format as "Fri, Apr 25" or similar
     const options = { weekday: 'short', month: 'short', day: 'numeric' };
     return date.toLocaleDateString('en-US', options);
   }
+}
+
+// Escape HTML to prevent XSS when inserting user data via innerHTML
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 // We'll initialize pastMeetings and pastMeetingsByDate when we load data from file
@@ -175,9 +186,8 @@ async function saveCurrentNote() {
       console.log('Updated meeting in upcomingMeetings array');
     }
 
-    // Also update the subtitle if it's a date-based one
     const dateObj = new Date(activeMeeting.date);
-    if (dateObj) {
+    if (!isNaN(dateObj.getTime())) {
       document.getElementById('noteDate').textContent = formatDate(dateObj);
     }
 
@@ -253,11 +263,11 @@ function createMeetingCard(meeting) {
   card.innerHTML = `
     ${iconHtml}
     <div class="meeting-content">
-      <div class="meeting-title">${meeting.title}</div>
+      <div class="meeting-title">${escapeHtml(meeting.title)}</div>
       ${subtitleHtml}
     </div>
     <div class="meeting-actions">
-      <button class="delete-meeting-btn" data-id="${meeting.id}" title="Delete note">
+      <button class="delete-meeting-btn" data-id="${escapeHtml(meeting.id)}" title="Delete note">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/>
         </svg>
@@ -326,9 +336,8 @@ function showEditorView(meetingId) {
   // Set the meeting title
   document.getElementById('noteTitle').textContent = meeting.title;
 
-  // Set the date display
   const dateObj = new Date(meeting.date);
-  document.getElementById('noteDate').textContent = formatDate(dateObj);
+  document.getElementById('noteDate').textContent = isNaN(dateObj.getTime()) ? '' : formatDate(dateObj);
 
   // Get the editor element
   const editorElement = document.getElementById('simple-editor');
@@ -624,8 +633,25 @@ function renderMeetings() {
     });
 }
 
+// Guard to prevent concurrent loads from racing
+let _loadInProgress = null;
+
 // Load meetings data from file
 async function loadMeetingsDataFromFile() {
+  // If a load is already in progress, wait for it instead of starting another
+  if (_loadInProgress) {
+    return _loadInProgress;
+  }
+
+  _loadInProgress = _doLoadMeetingsDataFromFile();
+  try {
+    return await _loadInProgress;
+  } finally {
+    _loadInProgress = null;
+  }
+}
+
+async function _doLoadMeetingsDataFromFile() {
   console.log("Loading meetings data from file...");
   try {
     const result = await window.electronAPI.loadMeetingsData();
@@ -727,9 +753,9 @@ function updateDebugTranscript(transcript) {
 
     // Create HTML for this entry
     entryDiv.innerHTML = `
-      <div class="transcript-speaker">${entry.speaker || 'Unknown'}</div>
-      <div class="transcript-text">${entry.text}</div>
-      <div class="transcript-timestamp">${formattedTime}</div>
+      <div class="transcript-speaker">${escapeHtml(entry.speaker || 'Unknown')}</div>
+      <div class="transcript-text">${escapeHtml(entry.text)}</div>
+      <div class="transcript-timestamp">${escapeHtml(formattedTime)}</div>
     `;
 
     // Add a highlight class for the newest entry
@@ -906,8 +932,8 @@ function updateDebugParticipants(participants) {
           <path d="M12 31C12 26.0294 15.5817 22 20 22C24.4183 22 28 26.0294 28 31" stroke="#a0a0a0" stroke-width="4"/>
         </svg>
       </div>
-      <div class="participant-name">${participant.name || 'Unknown'}</div>
-      <div class="participant-status">${participant.status || 'Active'}</div>
+      <div class="participant-name">${escapeHtml(participant.name || 'Unknown')}</div>
+      <div class="participant-status">${escapeHtml(participant.status || 'Active')}</div>
     `;
 
     participantsList.appendChild(participantDiv);
@@ -1232,12 +1258,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Initialize the debug panel
   initDebugPanel();
 
-  // Try to load the latest data from file - this is the only data source
+  // Load data from file (renderMeetings is called inside loadMeetingsDataFromFile)
   await loadMeetingsDataFromFile();
-
-  // Render meetings only after loading from file
-  console.log('Data loaded, rendering meetings...');
-  renderMeetings();
 
   // Initially show home view
   showHomeView();
@@ -1357,7 +1379,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               miniNotification.className = 'debug-notification participant-notification';
               miniNotification.innerHTML = `
                 <span class="debug-notification-title">New Participant:</span>
-                <span class="debug-notification-name">${latestParticipant.name || 'Unknown'}</span>
+                <span class="debug-notification-name">${escapeHtml(latestParticipant.name || 'Unknown')}</span>
               `;
 
               // Add to document
@@ -1407,8 +1429,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const miniNotification = document.createElement('div');
                 miniNotification.className = 'debug-notification transcript-notification';
                 miniNotification.innerHTML = `
-                  <span class="debug-notification-speaker">${latestEntry.speaker || 'Unknown'}</span>:
-                  <span class="debug-notification-text">${latestEntry.text.slice(0, 40)}${latestEntry.text.length > 40 ? '...' : ''}</span>
+                  <span class="debug-notification-speaker">${escapeHtml(latestEntry.speaker || 'Unknown')}</span>:
+                  <span class="debug-notification-text">${escapeHtml(latestEntry.text.slice(0, 40))}${latestEntry.text.length > 40 ? '...' : ''}</span>
                 `;
 
                 // Add to document
@@ -1451,39 +1473,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Listen for summary generation events
-  window.electronAPI.onSummaryGenerated((meetingId) => {
-    console.log('Summary generated for meeting:', meetingId);
+  // (onSummaryGenerated is handled above alongside onSummaryUpdate)
 
-    // If this note is currently being edited, refresh the content
-    if (currentEditingMeetingId === meetingId) {
-      loadMeetingsDataFromFile().then(() => {
-        const meeting = [...upcomingMeetings, ...pastMeetings].find(m => m.id === meetingId);
-        if (meeting) {
-          // Update the editor with the new content containing the summary
-          document.getElementById('simple-editor').value = meeting.content;
-        }
-      });
-    }
-  });
+  // Track whether a summary is actively streaming so we don't overwrite user edits
+  let _summaryStreamingForMeeting = null;
 
   // Listen for streaming summary updates
   window.electronAPI.onSummaryUpdate((data) => {
     const { meetingId, content, timestamp } = data;
 
-    // If this note is currently being edited, update the content immediately
+    // Mark this meeting as streaming
+    _summaryStreamingForMeeting = meetingId;
+
     if (currentEditingMeetingId === meetingId) {
-      // Get the editor element
       const editorElement = document.getElementById('simple-editor');
+      if (editorElement) {
+        requestAnimationFrame(() => {
+          editorElement.value = content;
+          editorElement.scrollTop = editorElement.scrollHeight;
+        });
+      }
+    }
+  });
 
-      // Update the editor with the latest streamed content
-      // Use requestAnimationFrame for smoother updates that don't block the main thread
-      requestAnimationFrame(() => {
-        editorElement.value = content;
+  // When summary generation finishes, clear the streaming flag
+  window.electronAPI.onSummaryGenerated((meetingId) => {
+    console.log('Summary generated for meeting:', meetingId);
+    if (_summaryStreamingForMeeting === meetingId) {
+      _summaryStreamingForMeeting = null;
+    }
 
-        // Force the editor to scroll to the bottom to follow the new text
-        // This creates a better experience of watching text appear
-        editorElement.scrollTop = editorElement.scrollHeight;
+    if (currentEditingMeetingId === meetingId) {
+      loadMeetingsDataFromFile().then(() => {
+        const meeting = [...upcomingMeetings, ...pastMeetings].find(m => m.id === meetingId);
+        if (meeting) {
+          const editorElement = document.getElementById('simple-editor');
+          if (editorElement) {
+            editorElement.value = meeting.content;
+          }
+        }
       });
     }
   });
@@ -1816,69 +1844,55 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (recordButton) {
 
     recordButton.addEventListener('click', async () => {
-      // Only allow recording if we're in a note
       if (!currentEditingMeetingId) {
         alert('You need to be in a note to start recording');
         return;
       }
 
-      window.isRecording = !window.isRecording;
-
-      // Get the elements inside the button
       const recordIcon = recordButton.querySelector('.record-icon');
       const stopIcon = recordButton.querySelector('.stop-icon');
 
-      if (window.isRecording) {
+      if (!window.isRecording) {
+        // Start recording
         try {
-          // Start recording
           console.log('Starting manual recording for meeting:', currentEditingMeetingId);
-          recordButton.disabled = true; // Temporarily disable to prevent double-clicks
+          recordButton.disabled = true;
 
-          // Change to stop mode immediately for better feedback
+          // Show stop UI as immediate feedback
           recordButton.classList.add('recording');
-          recordIcon.style.display = 'none';
-          stopIcon.style.display = 'block';
+          if (recordIcon) recordIcon.style.display = 'none';
+          if (stopIcon) stopIcon.style.display = 'block';
 
-          // Call the API to start recording
           const result = await window.electronAPI.startManualRecording(currentEditingMeetingId);
           recordButton.disabled = false;
 
           if (result.success) {
-            console.log('Manual recording started with ID:', result.recordingId);
+            // Only update state after confirmation
+            window.isRecording = true;
             window.currentRecordingId = result.recordingId;
+            console.log('Manual recording started with ID:', result.recordingId);
 
-            // Show a little toast message
             const toast = document.createElement('div');
             toast.className = 'toast';
             toast.textContent = 'Recording started...';
             document.body.appendChild(toast);
-
-            // Remove toast after 3 seconds
             setTimeout(() => {
               toast.style.opacity = '0';
-              setTimeout(() => {
-                document.body.removeChild(toast);
-              }, 300);
+              setTimeout(() => document.body.removeChild(toast), 300);
             }, 3000);
           } else {
-            // If starting failed, revert UI
             console.error('Failed to start recording:', result.error);
             alert('Failed to start recording: ' + result.error);
-            window.isRecording = false;
             recordButton.classList.remove('recording');
-            recordIcon.style.display = 'block';
-            stopIcon.style.display = 'none';
+            if (recordIcon) recordIcon.style.display = 'block';
+            if (stopIcon) stopIcon.style.display = 'none';
           }
         } catch (error) {
-          // Handle errors
           console.error('Error starting recording:', error);
           alert('Error starting recording: ' + (error.message || error));
-
-          // Reset UI state
-          window.isRecording = false;
           recordButton.classList.remove('recording');
-          recordIcon.style.display = 'block';
-          stopIcon.style.display = 'none';
+          if (recordIcon) recordIcon.style.display = 'block';
+          if (stopIcon) stopIcon.style.display = 'none';
           recordButton.disabled = false;
         }
       } else {
@@ -1886,44 +1900,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (window.currentRecordingId) {
           try {
             console.log('Stopping manual recording:', window.currentRecordingId);
-            recordButton.disabled = true; // Temporarily disable
+            recordButton.disabled = true;
 
-            // Call the API to stop recording
             const result = await window.electronAPI.stopManualRecording(window.currentRecordingId);
 
-            // Change to record mode
+            // Update state after confirmation
             recordButton.classList.remove('recording');
-            recordIcon.style.display = 'block';
-            stopIcon.style.display = 'none';
+            if (recordIcon) recordIcon.style.display = 'block';
+            if (stopIcon) stopIcon.style.display = 'none';
             recordButton.disabled = false;
+            window.isRecording = false;
+            window.currentRecordingId = null;
 
             if (result.success) {
               console.log('Manual recording stopped successfully');
-
-              // Show a little toast message
               const toast = document.createElement('div');
               toast.className = 'toast';
               toast.textContent = 'Recording stopped. Generating summary...';
               document.body.appendChild(toast);
-
-              // Remove toast after 3 seconds
               setTimeout(() => {
                 toast.style.opacity = '0';
-                setTimeout(() => {
-                  document.body.removeChild(toast);
-                }, 300);
+                setTimeout(() => document.body.removeChild(toast), 300);
               }, 3000);
-
-              // The recording-completed event handler will take care of refreshing the content
-              // and generating the summary when the recording finishes processing
-
             } else {
               console.error('Failed to stop recording:', result.error);
               alert('Failed to stop recording: ' + result.error);
             }
-
-            // Reset recording ID
-            window.currentRecordingId = null;
           } catch (error) {
             console.error('Error stopping recording:', error);
             alert('Error stopping recording: ' + (error.message || error));
@@ -1931,10 +1933,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         } else {
           console.warn('No active recording ID found');
-          // Reset UI anyway
+          window.isRecording = false;
           recordButton.classList.remove('recording');
-          recordIcon.style.display = 'block';
-          stopIcon.style.display = 'none';
+          if (recordIcon) recordIcon.style.display = 'block';
+          if (stopIcon) stopIcon.style.display = 'none';
         }
       }
     });
@@ -2004,22 +2006,5 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
   }
-
-
-
-  // Listen for recording completed events
-  window.electronAPI.onRecordingCompleted((meetingId) => {
-    console.log('Recording completed for meeting:', meetingId);
-    if (currentEditingMeetingId === meetingId) {
-      // Reload the meeting data first
-      loadMeetingsDataFromFile().then(() => {
-        // Refresh the editor with the updated content
-        const meeting = [...upcomingMeetings, ...pastMeetings].find(m => m.id === meetingId);
-        if (meeting) {
-          document.getElementById('simple-editor').value = meeting.content;
-        }
-      });
-    }
-  });
 
 });
