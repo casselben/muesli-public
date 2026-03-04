@@ -32,6 +32,10 @@
               <path d="M3 18H21V16H3V18ZM3 13H21V11H3V13ZM3 6V8H21V6H3Z" fill="#666666"/>
             </svg>
           </button>
+          <div class="demo-toggle-container">
+            <span class="demo-toggle-label">Demo</span>
+            <button class="demo-toggle" id="demoToggle" title="Toggle demo mode"></button>
+          </div>
           <div class="user-avatar">
             <svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect width="40" height="40" rx="20" fill="#f0f0f0"/>
@@ -150,6 +154,9 @@ Chat with meeting transcript: https://notes.granola.ai/d/393a95cf-4788-4a47-9deb
           </aside>
         </div>
 
+        <!-- Asana task extraction panel (post-call) -->
+        <div class="asana-task-panel" id="asanaTaskPanel"></div>
+
         <div class="floating-controls">
           <div class="control-buttons">
             <button class="control-btn record-btn" id="recordButton">
@@ -168,6 +175,10 @@ Chat with meeting transcript: https://notes.granola.ai/d/393a95cf-4788-4a47-9deb
                 <path d="M400,256a16,16,0,0,1-14.93-10.26l-22.84-59.37a8,8,0,0,0-4.6-4.6l-59.37-22.84a16,16,0,0,1,0-29.86l59.37-22.84a8,8,0,0,0,4.6-4.6L384.9,42.68a16.45,16.45,0,0,1,13.17-10.57,16,16,0,0,1,16.86,10.15l22.84,59.37a8,8,0,0,0,4.6,4.6l59.37,22.84a16,16,0,0,1,0,29.86l-59.37,22.84a8,8,0,0,0-4.6,4.6l-22.84,59.37A16,16,0,0,1,400,256Z" fill="currentColor"/>
               </svg>
               Auto
+            </button>
+            <button class="extract-tasks-btn" id="extractTasksBtn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" fill="currentColor"/></svg>
+              Tasks
             </button>
           </div>
         </div>

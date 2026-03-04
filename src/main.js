@@ -331,26 +331,33 @@ const fileOperationManager = {
   }
 };
 
-// Create a desktop SDK upload token
+// Create a desktop SDK upload token (tries ports 13373–13382 to match server fallback)
 async function createDesktopSdkUpload() {
-  try {
-    const response = await axios.get("http://localhost:13373/start-recording", { timeout: 10000 });
-
-    if (response.data.status !== 'success') {
-      console.error("Failed to create upload token:", response.data.message);
-      return null;
-    } else {
+  const PORT_MIN = 13373;
+  const PORT_MAX = 13382;
+  for (let port = PORT_MIN; port <= PORT_MAX; port++) {
+    try {
+      const response = await axios.get(`http://localhost:${port}/start-recording`, { timeout: 10000 });
+      if (response.data.status !== 'success') {
+        console.error("Failed to create upload token:", response.data.message);
+        return null;
+      }
       console.log("Upload token created successfully:", response.data.upload_token);
       return response.data;
+    } catch (error) {
+      if (error.code === 'ECONNREFUSED' || error.response?.status === 404) {
+        continue;
+      }
+      console.error("Error creating upload token:", JSON.stringify(error.errors || error.message || error));
+      if (error.response) {
+        console.error("Response data:", error.response.data);
+        console.error("Response status:", error.response.status);
+      }
+      return null;
     }
-  } catch (error) {
-    console.error("Error creating upload token:", JSON.stringify(error.errors || error.message || error));
-    if (error.response) {
-      console.error("Response data:", error.response.data);
-      console.error("Response status:", error.response.status);
-    }
-    return null;
   }
+  console.error("Could not reach start-recording server on ports 13373–13382");
+  return null;
 }
 
 // Initialize the Recall.ai SDK
@@ -1010,6 +1017,22 @@ ipcMain.handle('generateMeetingSummaryStreaming', async (event, meetingId) => {
   } catch (error) {
     console.error('Error generating streaming summary:', error);
     return { success: false, error: error.message };
+  }
+});
+
+// Return the OpenRouter key to the renderer (for client-side extraction)
+ipcMain.handle('getOpenRouterKey', async () => {
+  return process.env.OPENROUTER_KEY || '';
+});
+
+const { pushAllTasksToAsana } = require('./asana-push');
+
+ipcMain.handle('pushTasksToAsana', async (event, tasks) => {
+  try {
+    return await pushAllTasksToAsana(tasks);
+  } catch (err) {
+    console.error('pushTasksToAsana error:', err);
+    return { succeeded: 0, failed: (tasks || []).length, results: [], error: err.message };
   }
 });
 

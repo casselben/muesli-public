@@ -1,0 +1,471 @@
+/* ── Asana-themed variables ───────────────────────────── */
+:root {
+  --asana-salmon: #F06A6A;
+  --asana-orange: #F1BD6C;
+  --asana-green: #5DA283;
+  --asana-blue: #4573D2;
+  --asana-purple: #AA62E3;
+  --asana-bg: #F6F8F9;
+  --asana-card-bg: #FFFFFF;
+  --asana-border: #E8ECEE;
+  --asana-text: #1E1F21;
+  --asana-text-secondary: #6D6E6F;
+  --asana-hover: #F1F2F3;
+}
+
+/* ── "Extract Asana Tasks" button ────────────────────── */
+.extract-tasks-btn {
+  color: var(--asana-salmon);
+  background: #FDE8E8;
+  font-weight: 500;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 10px;
+  border: none;
+  border-radius: 20px;
+  min-width: 36px;
+  height: 36px;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+  gap: 5px;
+}
+.extract-tasks-btn:hover { background: #FBCECE; }
+.extract-tasks-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Task panel (post-call, below editor) ────────────── */
+.asana-task-panel {
+  border-top: 1px solid var(--asana-border);
+  background: var(--asana-bg);
+  padding: 20px 40px 30px;
+  display: none;
+  animation: fadeSlideUp 0.3s ease;
+}
+.asana-task-panel.visible { display: block; }
+
+.asana-task-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.asana-task-panel-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--asana-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.asana-task-panel-badge {
+  background: var(--asana-salmon);
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.asana-task-panel-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--asana-text-secondary);
+  padding: 4px;
+  border-radius: 4px;
+}
+.asana-task-panel-close:hover { background: var(--asana-hover); }
+
+.asana-task-panel-footer {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--asana-border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.asana-push-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  background: var(--asana-salmon);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+}
+.asana-push-btn:hover { background: #e05a5a; }
+.asana-push-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.asana-push-btn.success { background: var(--asana-green); }
+.asana-powered-by {
+  font-size: 11px;
+  color: var(--asana-text-secondary);
+}
+
+.asana-push-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: asana-spin 0.8s linear infinite;
+}
+@keyframes asana-spin { to { transform: rotate(360deg); } }
+
+.asana-toast-success a { color: #fff; text-decoration: underline; }
+
+.asana-push-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.asana-push-modal {
+  background: var(--asana-card-bg);
+  border-radius: 12px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+.asana-push-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--asana-border);
+}
+.asana-push-modal-header h3 { margin: 0; font-size: 16px; }
+.asana-push-modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--asana-text-secondary);
+  line-height: 1;
+  padding: 0 4px;
+}
+.asana-push-modal-body {
+  padding: 18px;
+  overflow: auto;
+  font-size: 12px;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  flex: 1;
+  min-height: 120px;
+}
+
+/* ── Section (Tasks / Decisions / Follow-ups) ────────── */
+.asana-section {
+  margin-bottom: 20px;
+}
+.asana-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--asana-text-secondary);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.asana-section-count {
+  background: var(--asana-border);
+  color: var(--asana-text-secondary);
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+/* ── Task card ───────────────────────────────────────── */
+.asana-card {
+  background: var(--asana-card-bg);
+  border: 1px solid var(--asana-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  cursor: default;
+}
+.asana-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  border-color: #D0D4D9;
+}
+.asana-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.asana-card-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #ccc;
+  flex-shrink: 0;
+  margin-top: 2px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.asana-card-check:hover { border-color: var(--asana-green); }
+.asana-card-check.checked {
+  border-color: var(--asana-green);
+  background: var(--asana-green);
+}
+.asana-card-body { flex: 1; min-width: 0; }
+.asana-card-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--asana-text);
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+.asana-card-title.done {
+  text-decoration: line-through;
+  color: var(--asana-text-secondary);
+}
+.asana-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--asana-text-secondary);
+}
+.asana-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.asana-tag.assignee { background: #E8E0F4; color: #6B47A8; }
+.asana-tag.due { background: #E3F3F1; color: #3D7B6A; }
+.asana-tag.project { background: #E0EDFF; color: #3B6AC7; }
+.asana-tag.priority-high { background: #FDDEDE; color: #C44040; }
+.asana-tag.priority-medium { background: #FFF3D6; color: #9E7B2F; }
+.asana-tag.priority-low { background: #E8F5E9; color: #4A7C59; }
+
+.asana-card-quote {
+  font-size: 12px;
+  color: var(--asana-text-secondary);
+  font-style: italic;
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--asana-border);
+  line-height: 1.4;
+}
+
+/* ── Decision / follow-up cards ──────────────────────── */
+.asana-decision-card,
+.asana-followup-card {
+  background: var(--asana-card-bg);
+  border: 1px solid var(--asana-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.asana-decision-card { border-left: 3px solid var(--asana-blue); }
+.asana-followup-card { border-left: 3px solid var(--asana-orange); }
+
+.asana-decision-summary,
+.asana-followup-desc {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--asana-text);
+  margin-bottom: 4px;
+}
+.asana-decision-by,
+.asana-followup-owner {
+  font-size: 12px;
+  color: var(--asana-text-secondary);
+}
+
+/* ── Real-time sidebar ───────────────────────────────── */
+.asana-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 360px;
+  height: 100vh;
+  background: var(--asana-bg);
+  border-left: 1px solid var(--asana-border);
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+  box-shadow: -2px 0 12px rgba(0,0,0,0.06);
+}
+.asana-sidebar.open { transform: translateX(0); }
+
+.asana-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--asana-border);
+  background: var(--asana-card-bg);
+}
+.asana-sidebar-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--asana-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.asana-sidebar-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--asana-text-secondary);
+  padding: 4px;
+  border-radius: 4px;
+}
+.asana-sidebar-close:hover { background: var(--asana-hover); }
+
+.asana-sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.asana-sidebar-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--asana-card-bg);
+  border: 1px solid var(--asana-border);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--asana-text-secondary);
+}
+.asana-sidebar-status .pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--asana-green);
+  animation: sidebarPulse 1.5s infinite;
+}
+@keyframes sidebarPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.asana-sidebar-empty {
+  text-align: center;
+  color: var(--asana-text-secondary);
+  padding: 40px 20px;
+  font-size: 13px;
+}
+
+/* ── Topics chips ────────────────────────────────────── */
+.asana-topics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.asana-topic-chip {
+  background: var(--asana-card-bg);
+  border: 1px solid var(--asana-border);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--asana-text-secondary);
+}
+
+/* ── Loading skeleton ────────────────────────────────── */
+.asana-skeleton {
+  background: linear-gradient(90deg, #eee 25%, #f5f5f5 50%, #eee 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+  height: 60px;
+  margin-bottom: 8px;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Demo toggle switch ──────────────────────────────── */
+.demo-toggle-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 10px;
+}
+.demo-toggle-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--asana-text-secondary);
+}
+.demo-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: #ccc;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+  border: none;
+  padding: 0;
+}
+.demo-toggle.active { background: var(--asana-green); }
+.demo-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.demo-toggle.active::after { transform: translateX(16px); }
+
+/* ── Animations ──────────────────────────────────────── */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.asana-card-enter {
+  animation: fadeSlideUp 0.25s ease;
+}
+
+/* ── When task panel is visible, shrink the editor ───── */
+.asana-task-panel.visible ~ .floating-controls {
+  bottom: 10px;
+}
+
+/* ── Responsive: shrink editor when sidebar is open ──── */
+body.asana-sidebar-open .app-container {
+  margin-right: 360px;
+  transition: margin-right 0.3s ease;
+}
+body.asana-sidebar-open .floating-controls {
+  transform: translateX(calc(-50% - 180px));
+}
+body.asana-sidebar-open .asana-task-panel {
+  margin-right: 0;
+}

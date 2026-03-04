@@ -1,0 +1,82 @@
+[
+  {
+    "speaker": "Sarah Chen",
+    "text": "Alright, let's get started. Quick standup before the sprint review tomorrow. Mike, you want to kick us off?",
+    "timestamp": "2026-02-22T10:00:05.000Z"
+  },
+  {
+    "speaker": "Mike Torres",
+    "text": "Sure. I finished the drag-and-drop reorder for the board view yesterday. It's behind the feature flag. I need someone to do a code review before I can merge.",
+    "timestamp": "2026-02-22T10:00:12.000Z"
+  },
+  {
+    "speaker": "Sarah Chen",
+    "text": "I can review that today. Flag it to me after this call.",
+    "timestamp": "2026-02-22T10:00:25.000Z"
+  },
+  {
+    "speaker": "Mike Torres",
+    "text": "Perfect. The other thing is the API rate limiting issue. Three customers hit the 429 limit last week. I think we need to bump the default from 100 to 250 requests per minute for Business tier.",
+    "timestamp": "2026-02-22T10:00:30.000Z"
+  },
+  {
+    "speaker": "Sarah Chen",
+    "text": "That's a bigger conversation. Let's not just bump it without looking at the infrastructure impact. Can you put together a quick analysis of what 250 would mean for our API gateway costs?",
+    "timestamp": "2026-02-22T10:00:45.000Z"
+  },
+  {
+    "speaker": "Mike Torres",
+    "text": "Yeah, I can have that by Thursday.",
+    "timestamp": "2026-02-22T10:00:58.000Z"
+  },
+  {
+    "speaker": "Lisa Park",
+    "text": "On my end, the new onboarding flow is in QA. We found two bugs yesterday. One is a blocker — the tooltip positioning breaks on Safari. I'm fixing that today. The other is cosmetic, low priority.",
+    "timestamp": "2026-02-22T10:01:05.000Z"
+  },
+  {
+    "speaker": "Sarah Chen",
+    "text": "What's the cosmetic one?",
+    "timestamp": "2026-02-22T10:01:20.000Z"
+  },
+  {
+    "speaker": "Lisa Park",
+    "text": "The progress bar animation stutters on the last step. It still works, just looks janky.",
+    "timestamp": "2026-02-22T10:01:22.000Z"
+  },
+  {
+    "speaker": "Sarah Chen",
+    "text": "Let's ship without fixing the animation. We can pick that up next sprint. Lisa, can you make sure the Safari fix is done by end of day so QA can re-test tomorrow morning?",
+    "timestamp": "2026-02-22T10:01:30.000Z"
+  },
+  {
+    "speaker": "Lisa Park",
+    "text": "Will do.",
+    "timestamp": "2026-02-22T10:01:42.000Z"
+  },
+  {
+    "speaker": "Sarah Chen",
+    "text": "One more thing. I talked to the partnerships team yesterday. The Slack integration launch is moving up to March 15th. That means we need the webhook endpoints ready two weeks earlier than planned. Mike, that's going to fall on your plate. Can you reprioritize?",
+    "timestamp": "2026-02-22T10:01:45.000Z"
+  },
+  {
+    "speaker": "Mike Torres",
+    "text": "That's tight. I can do it if I push the dashboard redesign to next sprint. Is that okay?",
+    "timestamp": "2026-02-22T10:02:05.000Z"
+  },
+  {
+    "speaker": "Sarah Chen",
+    "text": "Yeah, the Slack launch is higher priority. Let's make that call. Push the dashboard work.",
+    "timestamp": "2026-02-22T10:02:12.000Z"
+  },
+  {
+    "speaker": "Mike Torres",
+    "text": "Got it. I'll update the sprint board after this.",
+    "timestamp": "2026-02-22T10:02:20.000Z"
+  },
+  {
+    "speaker": "Sarah Chen",
+    "text": "Great. Anything else? No? Alright, let's ship it. Talk tomorrow at sprint review.",
+    "timestamp": "2026-02-22T10:02:25.000Z"
+  }
+]

@@ -50,9 +50,20 @@ app.get('/start-recording', async (req, res) => {
 });
 
 if (require.main === module) {
-    app.listen(13373, () => {
-        console.log(`Server listening on http://localhost:13373`);
-    });
+    const PORT_MIN = 13373;
+    const PORT_MAX = 13382;
+
+    function tryListen(port) {
+        const server = app.listen(port, () => {
+            console.log(`Server listening on http://localhost:${port}`);
+        });
+        server.on('error', (err) => {
+            if (err.code === 'EADDRINUSE' && port < PORT_MAX) {
+                server.close(() => tryListen(port + 1));
+            }
+        });
+    }
+    tryListen(PORT_MIN);
 }
 
 module.exports = app;

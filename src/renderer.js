@@ -7,6 +7,12 @@
  */
 
 import './index.css';
+import './asana-styles.css';
+import { extractFromTranscript } from './asana-extractor.js';
+import { renderTaskPanel, renderLoadingSkeleton } from './task-cards.js';
+import { startDemoPlayback, stopDemoPlayback, isDemoPlaying, getDemoTranscript } from './demo-mode.js';
+import { openSidebar, closeSidebar, isSidebarOpen, updateSidebar, updateSidebarStatus } from './sidebar.js';
+import { initTracker, resetTracker, feedEntry, getAccumulated, flush } from './realtime-tracker.js';
 
 // Create empty meetings data structure to be filled from the file
 const meetingsData = {
@@ -1413,6 +1419,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           const latestEntry = meeting.transcript[meeting.transcript.length - 1];
           console.log(`Latest transcript: ${latestEntry.speaker}: "${latestEntry.text}"`);
 
+          // Feed to realtime tracker for live Asana extraction
+          feedEntry(latestEntry);
+
           // Update the transcript area in the debug panel
           updateDebugTranscript(meeting.transcript);
 
@@ -1701,8 +1710,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('backButton').addEventListener('click', async () => {
     // Save content before going back to home
     await saveCurrentNote();
+
+    // Close Asana sidebar/panel if open
+    if (isSidebarOpen()) closeSidebar();
+    const taskPanel = document.getElementById('asanaTaskPanel');
+    if (taskPanel) taskPanel.classList.remove('visible');
+
+    // Stop demo if running
+    if (isDemoPlaying()) {
+      stopDemoPlayback();
+      const dt = document.getElementById('demoToggle');
+      if (dt) dt.classList.remove('active');
+    }
+
     showHomeView();
-    renderMeetings(); // Refresh the meeting list
+    renderMeetings();
   });
 
   // Set up the initial auto-save handler
@@ -1836,6 +1858,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('Updating recording button for current note');
       const isActive = data.state === 'recording' || data.state === 'paused';
       updateRecordingButtonUI(isActive, isActive ? data.recordingId : null);
+
+      // Auto-open the Asana sidebar when any recording starts
+      if (data.state === 'recording' && _openRouterKey && !isSidebarOpen()) {
+        initTracker({
+          apiKey: _openRouterKey,
+          onUpdate: (accumulated) => { updateSidebar(accumulated); }
+        });
+        openSidebar();
+      }
+
+      // Flush and update status when recording ends
+      if (data.state === 'idle' && isSidebarOpen()) {
+        flush();
+        updateSidebarStatus('Recording ended. Review items above.');
+      }
     }
   });
 
@@ -1871,6 +1908,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.isRecording = true;
             window.currentRecordingId = result.recordingId;
             console.log('Manual recording started with ID:', result.recordingId);
+
+            // Initialize realtime Asana tracker for live meetings
+            if (_openRouterKey) {
+              initTracker({
+                apiKey: _openRouterKey,
+                onUpdate: (accumulated) => { updateSidebar(accumulated); }
+              });
+              openSidebar();
+            }
 
             const toast = document.createElement('div');
             toast.className = 'toast';
@@ -1914,6 +1960,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (result.success) {
               console.log('Manual recording stopped successfully');
+
+              // Flush any remaining realtime extraction data
+              flush();
+              updateSidebarStatus('Recording ended. Review items above.');
+
               const toast = document.createElement('div');
               toast.className = 'toast';
               toast.textContent = 'Recording stopped. Generating summary...';
@@ -2004,6 +2055,224 @@ document.addEventListener('DOMContentLoaded', async () => {
         generateButton.innerHTML = originalHTML;
         generateButton.disabled = false;
       }
+    });
+  }
+
+  // ── Asana Demo Features ─────────────────────────────────────────────
+  let _openRouterKey = null;
+
+  // Fetch the API key once at startup
+  window.electronAPI.getOpenRouterKey().then(key => {
+    _openRouterKey = key;
+    console.log('OpenRouter key loaded:', key ? `${key.slice(0, 8)}...` : '(empty)');
+  });
+
+  // ── Feature 1: Post-call "Extract Tasks" button + Push to Asana ─────
+  const extractTasksBtn = document.getElementById('extractTasksBtn');
+  const asanaTaskPanel = document.getElementById('asanaTaskPanel');
+
+  async function handlePushToAsana(tasks) {
+    const btn = document.getElementById('pushToAsanaBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="asana-push-spinner"></span> Pushing...';
+    }
+    try {
+      const result = await window.electronAPI.pushTasksToAsana(tasks);
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" fill="currentColor"/></svg>
+          Push to Asana
+        `;
+      }
+
+      if (result.succeeded > 0) {
+        const first = result.results.find(r => r.permalink_url);
+        const toast = document.createElement('div');
+        toast.className = 'toast asana-toast-success';
+        toast.innerHTML = result.succeeded === 1
+          ? (first ? `Task pushed to Asana. <a href="${escapeHtml(first.permalink_url)}" target="_blank" rel="noopener">Open in Asana</a>` : '1 task pushed to Asana.')
+          : `${result.succeeded} tasks pushed to Asana.${first ? ` <a href="${escapeHtml(first.permalink_url)}" target="_blank" rel="noopener">View first</a>` : ''}`;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+          toast.style.opacity = '0';
+          setTimeout(() => { if (toast.parentNode) document.body.removeChild(toast); }, 300);
+        }, 5000);
+        if (btn) btn.classList.add('success');
+      }
+
+      if (result.failed > 0 || result.error) {
+        const failedResults = result.results.filter(r => !r.success);
+        const payloadJson = JSON.stringify(
+          result.error ? { error: result.error, results: failedResults } : { failed: failedResults },
+          null,
+          2
+        );
+        const modal = document.createElement('div');
+        modal.className = 'asana-push-modal-overlay';
+        modal.innerHTML = `
+          <div class="asana-push-modal">
+            <div class="asana-push-modal-header">
+              <h3>Push to Asana – issue</h3>
+              <button class="asana-push-modal-close">×</button>
+            </div>
+            <pre class="asana-push-modal-body">${escapeHtml(payloadJson)}</pre>
+          </div>
+        `;
+        modal.querySelector('.asana-push-modal-close').onclick = () => document.body.removeChild(modal);
+        modal.onclick = (e) => { if (e.target === modal) document.body.removeChild(modal); };
+        document.body.appendChild(modal);
+      }
+    } catch (err) {
+      console.error('Push to Asana error:', err);
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" fill="currentColor"/></svg>
+          Push to Asana
+        `;
+      }
+      alert('Push to Asana failed: ' + (err.message || err));
+    }
+  }
+
+  if (extractTasksBtn) {
+    extractTasksBtn.addEventListener('click', async () => {
+      if (!currentEditingMeetingId) {
+        alert('Open a meeting note first');
+        return;
+      }
+
+      const meeting = [...upcomingMeetings, ...pastMeetings].find(m => m.id === currentEditingMeetingId);
+      if (!meeting || !meeting.transcript || meeting.transcript.length === 0) {
+        alert('No transcript available for this meeting. Record a meeting first, or use Demo mode.');
+        return;
+      }
+
+      if (!_openRouterKey) {
+        alert('OpenRouter API key not configured. Check your .env file.');
+        return;
+      }
+
+      // Show loading skeleton
+      renderLoadingSkeleton(asanaTaskPanel);
+
+      try {
+        const extraction = await extractFromTranscript(meeting.transcript, {
+          apiKey: _openRouterKey
+        });
+        renderTaskPanel(asanaTaskPanel, extraction, { onPushToAsana: handlePushToAsana });
+        console.log('Task extraction complete:', extraction);
+      } catch (err) {
+        console.error('Task extraction failed:', err);
+        asanaTaskPanel.innerHTML = `<div style="padding:20px;color:#C44040;">Extraction failed: ${err.message}</div>`;
+        asanaTaskPanel.classList.add('visible');
+      }
+    });
+  }
+
+  // ── Feature 2: Demo mode toggle ─────────────────────────────────────
+  const demoToggle = document.getElementById('demoToggle');
+  let _demoMeetingId = null;
+
+  if (demoToggle) {
+    demoToggle.addEventListener('click', async () => {
+      if (isDemoPlaying()) {
+        // Stop demo
+        stopDemoPlayback();
+        flush();
+        demoToggle.classList.remove('active');
+        updateSidebarStatus('Demo ended. Review items above.');
+        return;
+      }
+
+      if (!_openRouterKey) {
+        alert('OpenRouter API key not configured. Check your .env file.');
+        return;
+      }
+
+      // Create a fake meeting note for the demo
+      const demoId = 'demo-' + Date.now();
+      const now = new Date();
+      const demoMeeting = {
+        id: demoId,
+        type: 'document',
+        title: 'Team Standup (Demo)',
+        subtitle: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        hasDemo: true,
+        date: now.toISOString(),
+        participants: [
+          { id: 'p1', name: 'Sarah Chen', status: 'active' },
+          { id: 'p2', name: 'Mike Torres', status: 'active' },
+          { id: 'p3', name: 'Lisa Park', status: 'active' }
+        ],
+        content: '# Team Standup (Demo)\nRecording: In Progress (Demo)...',
+        transcript: []
+      };
+
+      pastMeetings.unshift(demoMeeting);
+      meetingsData.pastMeetings.unshift(demoMeeting);
+      _demoMeetingId = demoId;
+
+      renderMeetings();
+      showEditorView(demoId);
+
+      // Initialize the realtime tracker
+      initTracker({
+        apiKey: _openRouterKey,
+        onUpdate: (accumulated) => {
+          updateSidebar(accumulated);
+        }
+      });
+
+      openSidebar();
+      demoToggle.classList.add('active');
+
+      startDemoPlayback({
+        onEntry: (entry, index, total) => {
+          // Append to the demo meeting's transcript
+          demoMeeting.transcript.push(entry);
+
+          // Update the debug transcript panel
+          updateDebugTranscript(demoMeeting.transcript);
+
+          // Feed to realtime tracker
+          feedEntry(entry);
+
+          updateSidebarStatus(`Processing ${index}/${total} transcript lines...`);
+
+          // Update the editor with a running transcript view
+          const editorElement = document.getElementById('simple-editor');
+          if (editorElement && currentEditingMeetingId === demoId) {
+            const lines = demoMeeting.transcript.map(e => `${e.speaker}: ${e.text}`).join('\n');
+            editorElement.value = `# Team Standup (Demo)\n\n${lines}`;
+            editorElement.scrollTop = editorElement.scrollHeight;
+          }
+        },
+        onDone: () => {
+          console.log('Demo playback complete');
+          demoToggle.classList.remove('active');
+          flush();
+          updateSidebarStatus('Demo complete. All items extracted.');
+
+          // Auto-run full extraction after demo ends
+          const fullTranscript = getDemoTranscript();
+          extractFromTranscript(fullTranscript, { apiKey: _openRouterKey })
+            .then(extraction => {
+              renderTaskPanel(asanaTaskPanel, extraction, { onPushToAsana: handlePushToAsana });
+              // Also update the meeting content with a summary
+              const editorElement = document.getElementById('simple-editor');
+              if (editorElement && currentEditingMeetingId === demoId) {
+                const lines = fullTranscript.map(e => `${e.speaker}: ${e.text}`).join('\n');
+                const taskList = extraction.tasks.map(t => `- [ ] ${t.title} (${t.assignee})`).join('\n');
+                const decisionList = extraction.decisions.map(d => `- ${d.summary}`).join('\n');
+                editorElement.value = `# Team Standup (Demo)\n\n## Transcript\n${lines}\n\n## Extracted Tasks\n${taskList}\n\n## Decisions\n${decisionList}`;
+              }
+            })
+            .catch(err => console.error('Post-demo extraction failed:', err));
+        }
+      });
     });
   }
 
