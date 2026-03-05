@@ -30,6 +30,9 @@ app.get('/start-recording', async (req, res) => {
                         type: "desktop_sdk_callback",
                         events: [
                             "participant_events.join",
+                            "participant_events.update",
+                            "participant_events.speech_on",
+                            "participant_events.speech_off",
                             "video_separate_png.data",
                             "transcript.data",
                             "transcript.provider_data"

@@ -8,6 +8,13 @@ const OpenAI = require('openai');
 const sdkLogger = require('./sdk-logger');
 require('dotenv').config();
 
+function formatMeetingTitle(type) {
+  const now = new Date();
+  const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `${type} — ${date}, ${time}`;
+}
+
 // Function to get the OpenRouter headers
 function getHeaderLines() {
   return [
@@ -508,6 +515,10 @@ function initSDK() {
       console.log(`Cleaning up meeting tracking for: ${evt.window.id}`);
       delete global.activeMeetingIds[evt.window.id];
     }
+    participantMaps.delete(evt.window.id);
+    activeSpeakers.delete(evt.window.id);
+    const timer1 = activeSpeakerTimers.get(evt.window.id);
+    if (timer1) { clearTimeout(timer1); activeSpeakerTimers.delete(evt.window.id); }
 
     // Only clear detectedMeeting if this is the one we're tracking
     if (detectedMeeting && detectedMeeting.window && detectedMeeting.window.id === evt.window.id) {
@@ -535,6 +546,11 @@ function initSDK() {
     sdkLogger.logEvent('recording-ended', {
       windowId
     });
+
+    participantMaps.delete(windowId);
+    activeSpeakers.delete(windowId);
+    const timer2 = activeSpeakerTimers.get(windowId);
+    if (timer2) { clearTimeout(timer2); activeSpeakerTimers.delete(windowId); }
 
     try {
       // Update the note with recording information
@@ -680,7 +696,41 @@ function initSDK() {
     else if (evt.event === 'participant_events.join' && evt.data && evt.data.data) {
       await processParticipantJoin(evt);
     }
+    else if (evt.event === 'participant_events.update' && evt.data && evt.data.data) {
+      const windowId = evt.window?.id;
+      const participant = evt.data.data.participant;
+      if (windowId && participant) {
+        updateParticipantMap(windowId, participant.id, participant.name);
+      }
+    }
+    else if (evt.event === 'participant_events.speech_on' && evt.data && evt.data.data) {
+      const windowId = evt.window?.id;
+      const participant = evt.data.data.participant;
+      if (windowId && participant) {
+        if (isRealName(participant.name)) {
+          updateParticipantMap(windowId, participant.id, participant.name);
+        }
+        const name = participantMaps.get(windowId)?.get(participant.id) || participant.name || null;
+        activeSpeakers.set(windowId, { id: participant.id, name });
+      }
+    }
+    else if (evt.event === 'participant_events.speech_off' && evt.data && evt.data.data) {
+      const windowId = evt.window?.id;
+      if (windowId) {
+        const existing = activeSpeakerTimers.get(windowId);
+        if (existing) clearTimeout(existing);
+        activeSpeakerTimers.set(windowId, setTimeout(() => {
+          activeSpeakers.delete(windowId);
+          activeSpeakerTimers.delete(windowId);
+        }, SPEAKER_LINGER_MS));
+      }
+    }
     else if (evt.event === 'video_separate_png.data' && evt.data && evt.data.data) {
+      const windowId = evt.window?.id;
+      const participant = evt.data?.data?.participant;
+      if (windowId && participant && isRealName(participant.name)) {
+        updateParticipantMap(windowId, participant.id, participant.name);
+      }
       await processVideoFrame(evt);
     }
   });
@@ -1054,19 +1104,21 @@ ipcMain.handle('sendRecallBot', async (event, meetingUrl) => {
 
     const now = new Date();
     const meetingId = 'meeting-' + now.getTime();
+    const botTitle = formatMeetingTitle('Bot Recording');
     const meeting = {
       id: meetingId,
       type: 'document',
-      title: 'Bot Recording',
+      title: botTitle,
       subtitle: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       hasDemo: false,
       date: now.toISOString(),
       participants: [],
-      content: `# Meeting Title\n• Bot Recording\n\n# Meeting Date and Time\n• ${now.toLocaleString()}\n\n# Participants\n• \n\n# Description\n• Recorded via Recall API bot\n\nChat with meeting transcript: `,
+      content: `# ${botTitle}\n\n# Meeting Date and Time\n• ${now.toLocaleString()}\n\n# Participants\n• \n\n# Description\n• Recorded via Recall API bot\n\nChat with meeting transcript: `,
       transcript: [],
       botId,
       source: 'recall-api',
-      meetingUrl
+      meetingUrl,
+      mode: 'bot'
     };
 
     await fileOperationManager.scheduleOperation((data) => {
@@ -1197,7 +1249,7 @@ async function createMeetingNoteAndRecord(platformName) {
 
     const meetingTitle = meetingWindowTitle 
       ? meetingWindowTitle 
-      : `${platformName} Meeting - ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      : formatMeetingTitle(`${platformName} Meeting`);
 
     const template = `# ${meetingTitle}\nRecording: In Progress...`;
 
@@ -1212,7 +1264,8 @@ async function createMeetingNoteAndRecord(platformName) {
       content: template,
       recordingId: meetingWindowId,
       platform: platformName,
-      transcript: []
+      transcript: [],
+      mode: 'virtual'
     };
 
     if (global.activeMeetingIds[meetingWindowId]) {
@@ -1381,9 +1434,11 @@ async function processParticipantJoin(evt) {
 
     console.log(`Participant joined: ${participantName} (ID: ${participantId}, Host: ${isHost})`);
 
-    // Skip "Host" and "Guest" generic names
+    updateParticipantMap(windowId, participantId, participantName);
+
+    // Skip "Host" and "Guest" generic names for the DB write
     if (participantName === "Host" || participantName === "Guest" || participantName.includes("others") || (participantName.split(" ").length > 3)) {
-      console.log(`Skipping generic participant name: ${participantName}`);
+      console.log(`Skipping generic participant name for DB: ${participantName}`);
       return;
     }
 
@@ -1444,16 +1499,39 @@ async function processParticipantJoin(evt) {
   }
 }
 
+const participantMaps = new Map();
+const activeSpeakers = new Map();
+const activeSpeakerTimers = new Map();
 let currentUnknownSpeaker = -1;
 
+const GENERIC_NAMES = new Set(['Host', 'Guest', 'Unknown', 'Unknown Participant']);
+const SPEAKER_LINGER_MS = 5000;
+
+function isRealName(name) {
+  return name && !GENERIC_NAMES.has(name) && !name.includes('others') && name.split(' ').length <= 3;
+}
+
+function updateParticipantMap(windowId, participantId, name) {
+  if (participantId == null || !name) return;
+  if (!participantMaps.has(windowId)) {
+    participantMaps.set(windowId, new Map());
+  }
+  const map = participantMaps.get(windowId);
+  const existing = map.get(participantId);
+  if (!existing || (isRealName(name) && !isRealName(existing))) {
+    map.set(participantId, name);
+    console.log(`Participant map: ${participantId} -> "${name}" (window ${windowId})`);
+  }
+}
+
 async function processTranscriptProviderData(evt) {
-  // let speakerId = evt.data.data.payload.
   try {
-    if (evt.data.data.data.payload.channel.alternatives[0].words[0].speaker !== undefined) {
-      currentUnknownSpeaker = evt.data.data.data.payload.channel.alternatives[0].words[0].speaker;
+    const speakerNum = evt.data.data.data.payload.channel.alternatives[0].words[0].speaker;
+    if (speakerNum !== undefined) {
+      currentUnknownSpeaker = speakerNum;
     }
   } catch (error) {
-    // console.error("Error processing provider data:", error);
+    // Provider data structure varies; silent catch is intentional
   }
 }
 
@@ -1484,14 +1562,25 @@ async function processTranscriptData(evt) {
       return; // No words to process
     }
 
-    // Get speaker information
+    // Debug: log what Recall's Speaker Timeline sends
+    console.log(`[Diarization] transcript.data participant:`, JSON.stringify(evt.data.data.participant));
+
+    // Resolve speaker name using a cascade of sources
+    const participantName = evt.data.data.participant?.name;
+    const participantId = evt.data.data.participant?.id;
     let speaker;
-    if (evt.data.data.participant?.name && evt.data.data.participant?.name !== "Host" && evt.data.data.participant?.name !== "Guest") {
-      speaker = evt.data.data.participant?.name;
+
+    if (isRealName(participantName)) {
+      updateParticipantMap(windowId, participantId, participantName);
+      speaker = participantName;
+    } else if (participantId != null && isRealName(participantMaps.get(windowId)?.get(participantId))) {
+      speaker = participantMaps.get(windowId).get(participantId);
+    } else if (isRealName(activeSpeakers.get(windowId)?.name)) {
+      speaker = activeSpeakers.get(windowId).name;
     } else if (currentUnknownSpeaker !== -1) {
       speaker = `Speaker ${currentUnknownSpeaker}`;
     } else {
-      speaker = "Unknown Speaker";
+      speaker = 'Unknown Speaker';
     }
 
     // Combine all words into a single text

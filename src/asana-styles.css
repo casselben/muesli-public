@@ -410,13 +410,14 @@
 .demo-toggle-container {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-right: 10px;
+  gap: 6px;
+  -webkit-app-region: no-drag;
 }
 .demo-toggle-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--asana-text-secondary);
+  user-select: none;
 }
 .demo-toggle {
   position: relative;
@@ -472,20 +473,12 @@ body.asana-sidebar-open .asana-task-panel {
 
 /* ── Send Bot button & modal ─────────────────────────── */
 .send-bot-btn {
-  display: inline-flex;
-  align-items: center;
-  background: var(--asana-blue, #4573D2);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s;
+  background: var(--asana-blue, #4573D2) !important;
+  color: #fff !important;
+  border: none !important;
 }
 .send-bot-btn:hover {
-  background: #3a63b8;
+  background: #3a63b8 !important;
 }
 
 .send-bot-modal-overlay {

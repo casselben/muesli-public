@@ -44,12 +44,13 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 20px;
+  padding: 8px 16px;
   background-color: var(--card-bg);
   border-bottom: 1px solid var(--border-color);
   position: sticky;
   top: 0;
   z-index: 100;
+  min-height: 48px;
 }
 
 #drag-region, #debug-drag-region {
@@ -62,7 +63,11 @@ body {
 }
 
 .header-left {
-  margin-left: 60px; /* Add space to avoid overlapping with macOS window controls */
+  margin-left: 60px;
+}
+
+.header-right {
+  gap: 6px;
 }
 
 .header-center {
@@ -118,36 +123,70 @@ body {
   background-color: transparent;
   color: var(--text-secondary);
   padding: 8px;
-  margin-right: 10px;
   display: none;
 }
 
-.new-note-btn, .join-meeting-btn {
-  background-color: var(--card-bg);
-  border: 1px solid var(--border-color);
-  margin-right: 10px;
-  -webkit-app-region: no-drag; /* Make button clickable */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f4f5f7;
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.header-action-btn {
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+  font-weight: 500;
+  border-radius: 6px !important;
+  gap: 5px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.header-action-btn svg {
+  flex-shrink: 0;
+}
+
+.new-note-btn {
+  background: transparent;
+  color: #555;
+  border: none;
+}
+.new-note-btn:hover {
+  background: #e8e9eb;
 }
 
 .join-meeting-btn {
   background-color: #007aff;
   color: white;
+  border: none;
+}
+.join-meeting-btn:hover {
+  background-color: #0063d1;
+}
+.join-meeting-btn:disabled {
+  background-color: #e0e0e0;
+  color: #999;
+  cursor: not-allowed;
 }
 
-.join-meeting-btn:disabled {
-  background-color: #ccc;
-  color: #666;
-  cursor: not-allowed;
-  opacity: 0.6;
+.header-divider {
+  width: 1px;
+  height: 20px;
+  background: #ddd;
+  margin: 0 4px;
 }
 
 .user-avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   overflow: hidden;
   background-color: #ddd;
-  -webkit-app-region: no-drag; /* Make avatar clickable */
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
 }
 
 .avatar-img {

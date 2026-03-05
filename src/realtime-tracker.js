@@ -1,7 +1,7 @@
 import { extractIncremental } from './asana-extractor.js';
 
-const BATCH_SIZE = 4;
-const DEBOUNCE_MS = 3000;
+const BATCH_SIZE = 2;
+const DEBOUNCE_MS = 1000;
 
 let _accumulated = { tasks: [], decisions: [], follow_ups: [], topics_discussed: [] };
 let _processedCount = 0;

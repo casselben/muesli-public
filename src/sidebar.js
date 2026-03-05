@@ -49,8 +49,23 @@ export function getSidebarElement() {
 
 export function openSidebar() {
   const el = getSidebarElement();
+  clearSidebar();
   el.classList.add('open');
   document.body.classList.add('asana-sidebar-open');
+}
+
+export function clearSidebar() {
+  const el = getSidebarElement();
+  const badge = el.querySelector('#sidebarBadge');
+  if (badge) badge.textContent = '0';
+  const empty = el.querySelector('#sidebarEmpty');
+  if (empty) empty.style.display = 'block';
+  ['#sidebarTopics', '#sidebarTasks', '#sidebarDecisions', '#sidebarFollowUps'].forEach(sel => {
+    const c = el.querySelector(sel);
+    if (c) c.innerHTML = '';
+  });
+  const status = el.querySelector('#sidebarStatus');
+  if (status) status.innerHTML = '<span class="pulse-dot"></span> Listening for action items...';
 }
 
 export function closeSidebar() {

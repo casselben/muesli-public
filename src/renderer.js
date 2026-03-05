@@ -11,8 +11,15 @@ import './asana-styles.css';
 import { extractFromTranscript } from './asana-extractor.js';
 import { renderTaskPanel, renderLoadingSkeleton } from './task-cards.js';
 import { startDemoPlayback, stopDemoPlayback, isDemoPlaying, getDemoTranscript } from './demo-mode.js';
-import { openSidebar, closeSidebar, isSidebarOpen, updateSidebar, updateSidebarStatus } from './sidebar.js';
+import { openSidebar, closeSidebar, clearSidebar, isSidebarOpen, updateSidebar, updateSidebarStatus } from './sidebar.js';
 import { initTracker, resetTracker, feedEntry, getAccumulated, flush } from './realtime-tracker.js';
+
+function formatMeetingTitle(type) {
+  const now = new Date();
+  const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `${type} — ${date}, ${time}`;
+}
 
 // Create empty meetings data structure to be filled from the file
 const meetingsData = {
@@ -155,8 +162,7 @@ async function saveCurrentNote() {
     return;
   }
 
-  // Get title text, defaulting to "New Note" if empty
-  const noteTitle = noteTitleElement.textContent.trim() || 'New Note';
+  const noteTitle = noteTitleElement.textContent.trim() || formatMeetingTitle('Meeting');
 
   // Set title back to element in case it was empty
   if (!noteTitleElement.textContent.trim()) {
@@ -522,19 +528,20 @@ async function createNewMeeting() {
   // Current date and time
   const now = new Date();
 
-  // Generate the template for the content
-  const template = `# Meeting Title\n• New Note\n\n# Meeting Date and Time\n• ${now.toLocaleString()}\n\n# Participants\n• \n\n# Description\n• \n\nChat with meeting transcript: `;
+  const meetingTitle = formatMeetingTitle('In-person Meeting');
 
-  // Create a new meeting object - ensure it's of type document
+  const template = `# ${meetingTitle}\n\n# Meeting Date and Time\n• ${now.toLocaleString()}\n\n# Participants\n• \n\n# Description\n• \n\nChat with meeting transcript: `;
+
   const newMeeting = {
     id: id,
-    type: 'document', // Explicitly set as document type, not calendar
-    title: 'New Note',
+    type: 'document',
+    title: meetingTitle,
     subtitle: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     hasDemo: false,
     date: now.toISOString(),
     participants: [],
-    content: template // Set the content directly
+    content: template,
+    mode: 'in-person'
   };
 
   // Log what we're adding
@@ -551,16 +558,13 @@ async function createNewMeeting() {
   }
   pastMeetingsByDate[dateKey].unshift(newMeeting);
 
-  // Save the data to file
-  try {
-    await saveMeetingsData();
-    console.log('New meeting created and saved:', newMeeting.title);
-  } catch (error) {
-    console.error('Error saving new meeting:', error);
-  }
-
   // Set current editing ID to the new meeting ID BEFORE showing the editor
   currentEditingMeetingId = id;
+
+  // Save to file in background (don't block the UI)
+  saveMeetingsData()
+    .then(() => console.log('New meeting created and saved:', newMeeting.title))
+    .catch(error => console.error('Error saving new meeting:', error));
   console.log('Set currentEditingMeetingId to:', id);
 
   // Force a reset of the editor before showing the new meeting
@@ -1809,8 +1813,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Save content before going back to home
     await saveCurrentNote();
 
-    // Close Asana sidebar/panel if open
+    // Close Asana sidebar/panel and reset tracker state
     if (isSidebarOpen()) closeSidebar();
+    resetTracker();
     const taskPanel = document.getElementById('asanaTaskPanel');
     if (taskPanel) taskPanel.classList.remove('visible');
 
@@ -2306,7 +2311,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           { id: 'p3', name: 'Lisa Park', status: 'active' }
         ],
         content: '# Team Standup (Demo)\nRecording: In Progress (Demo)...',
-        transcript: []
+        transcript: [],
+        mode: 'demo'
       };
 
       pastMeetings.unshift(demoMeeting);
